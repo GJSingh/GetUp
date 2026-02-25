@@ -1,0 +1,52 @@
+# Xcode
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+*.moved-aside
+*.xccheckout
+*.xcscmblueprint
+
+# Build
+build/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+Package.resolved
+
+# CocoaPods (not used but just in case)
+Pods/
+*.xcworkspace
+
+# macOS
+.DS_Store
+*.swp
+*~.nib
+*.pbxuser
+timeline.xctimeline
+playground.xcworkspace
+
+# Certificates & profiles — NEVER commit these
+*.p12
+*.cer
+*.mobileprovision
+*.p8
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
