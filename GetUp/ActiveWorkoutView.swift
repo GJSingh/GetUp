@@ -52,19 +52,24 @@ struct ActiveWorkoutView: View {
                         if vm.poseResult.isEmpty && vm.state == .active {
                             VStack {
                                 Spacer()
-                                HStack(spacing: 6) {
-                                    Image(systemName: "exclamationmark.triangle.fill")
-                                        .foregroundColor(Color(hex: "FFB740"))
-                                        .font(.system(size: 12))
-                                    Text("Move into frame")
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundColor(Color(hex: "FFB740"))
+                                VStack(spacing: 8) {
+                                    Image(systemName: "iphone.and.arrow.forward")
+                                        .foregroundColor(Color(hex: "5BC8FF"))
+                                        .font(.system(size: 22))
+                                    Text("Prop your phone up")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundColor(.white)
+                                    Text("Lean it against a wall, bottle, or book\nso your full body is visible")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(Color(hex: "8888AA"))
+                                        .multilineTextAlignment(.center)
                                 }
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 8)
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 14)
                                 .background(.ultraThinMaterial)
-                                .cornerRadius(20)
-                                .padding(.bottom, 12)
+                                .cornerRadius(16)
+                                .padding(.bottom, 16)
+                                .padding(.horizontal, 40)
                             }
                         }
                     }

@@ -83,7 +83,7 @@ enum ExerciseLibrary {
         id: "bicep_curl",
         name: "Bicep Curl",
         emoji: "💪",
-        description: "Stand tall, curl the dumbbell toward your shoulder, then lower under control.",
+        description: "Prop your phone sideways against a wall at hip height — your full arm should be visible.",
         muscleGroups: ["Biceps", "Forearms"],
         defaultSets: 3,
         defaultReps: 12,
@@ -102,7 +102,7 @@ enum ExerciseLibrary {
         muscleGroups: ["Shoulders", "Triceps", "Upper Chest"],
         defaultSets: 3,
         defaultReps: 10,
-        cameraSetup: "Place your phone in front of you so your full upper body is visible."
+        cameraSetup: "Prop your phone in front of you at chest height — both arms should be fully visible."
     ) { joints in
         return ExerciseAnalysers.shoulderPress(joints: joints)
     }
@@ -117,7 +117,7 @@ enum ExerciseLibrary {
         muscleGroups: ["Side Delts"],
         defaultSets: 3,
         defaultReps: 15,
-        cameraSetup: "Place your phone in front of you so both arms are fully visible."
+        cameraSetup: "Prop your phone in front of you at chest height — stand 5-6 feet away."
     ) { joints in
         return ExerciseAnalysers.lateralRaise(joints: joints)
     }
@@ -132,7 +132,7 @@ enum ExerciseLibrary {
         muscleGroups: ["Quads", "Glutes", "Hamstrings"],
         defaultSets: 3,
         defaultReps: 12,
-        cameraSetup: "Place your phone to the side so your full body from head to ankle is visible."
+        cameraSetup: "Prop your phone sideways at hip height, 6 feet away — full body head to ankle."
     ) { joints in
         return ExerciseAnalysers.squat(joints: joints)
     }
@@ -147,7 +147,7 @@ enum ExerciseLibrary {
         muscleGroups: ["Triceps"],
         defaultSets: 3,
         defaultReps: 12,
-        cameraSetup: "Place your phone to the side so your full arm from elbow to wrist is visible."
+        cameraSetup: "Prop your phone to your side at shoulder height — your arm from elbow to wrist visible."
     ) { joints in
         return ExerciseAnalysers.tricepExtension(joints: joints)
     }
