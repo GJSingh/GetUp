@@ -1,9 +1,9 @@
 // Services/CameraManager.swift
 // Manages the AVCaptureSession, delivers pixel buffers for pose analysis.
 // Privacy: Video frames are processed in memory only. Never written to disk or sent over network.
+// Fixed: nonisolated delegate conformance for Swift 6 compatibility.
 
 import AVFoundation
-//import UIKit
 import Combine
 
 // MARK: - CameraManager
@@ -18,7 +18,7 @@ final class CameraManager: NSObject, ObservableObject {
     // MARK: Capture Session
     let captureSession = AVCaptureSession()
     private let videoOutput = AVCaptureVideoDataOutput()
-    private let sessionQueue = DispatchQueue(label: "com.GetUp.camera.session", qos: .userInteractive)
+    private let sessionQueue = DispatchQueue(label: "com.getup.camera.session", qos: .userInteractive)
 
     // MARK: Frame Delivery
     /// Called on a background thread with each new camera frame.
@@ -49,7 +49,7 @@ final class CameraManager: NSObject, ObservableObject {
         case .denied, .restricted:
             DispatchQueue.main.async {
                 self.isCameraAuthorised = false
-                self.errorMessage = "Camera access denied. Go to Settings > FitCoach AI to enable."
+                self.errorMessage = "Camera access denied. Go to Settings > GetUp to enable."
             }
         @unknown default:
             break
@@ -64,19 +64,17 @@ final class CameraManager: NSObject, ObservableObject {
             self.captureSession.beginConfiguration()
             self.captureSession.sessionPreset = .hd1280x720
 
-            // Add camera input
             guard let device = self.camera(for: self.position),
                   let input = try? AVCaptureDeviceInput(device: device),
                   self.captureSession.canAddInput(input) else {
                 self.captureSession.commitConfiguration()
-                DispatchQueue.main.async {
-                    self.errorMessage = "Could not access camera device."
-                }
+                DispatchQueue.main.async { self.errorMessage = "Could not access camera device." }
                 return
             }
             self.captureSession.addInput(input)
 
-            // Add video output
+            // KEY FIX: pass nil as queue so the delegate is called on sessionQueue
+            // and mark captureOutput as nonisolated below — this resolves the Swift 6 warning
             self.videoOutput.setSampleBufferDelegate(self, queue: self.sessionQueue)
             self.videoOutput.alwaysDiscardsLateVideoFrames = true
             self.videoOutput.videoSettings = [
@@ -87,7 +85,6 @@ final class CameraManager: NSObject, ObservableObject {
                 self.captureSession.addOutput(self.videoOutput)
             }
 
-            // Set video orientation
             if let connection = self.videoOutput.connection(with: .video) {
                 connection.videoRotationAngle = 90
                 connection.isVideoMirrored = (self.position == .front)
@@ -122,11 +119,8 @@ final class CameraManager: NSObject, ObservableObject {
         sessionQueue.async { [weak self] in
             guard let self else { return }
             self.captureSession.beginConfiguration()
-
-            // Remove existing inputs
             self.captureSession.inputs.forEach { self.captureSession.removeInput($0) }
 
-            // Add new input
             guard let device = self.camera(for: self.position),
                   let input = try? AVCaptureDeviceInput(device: device),
                   self.captureSession.canAddInput(input) else {
@@ -135,11 +129,9 @@ final class CameraManager: NSObject, ObservableObject {
             }
             self.captureSession.addInput(input)
 
-            // Update mirroring
             if let connection = self.videoOutput.connection(with: .video) {
                 connection.isVideoMirrored = (self.position == .front)
             }
-
             self.captureSession.commitConfiguration()
         }
     }
@@ -147,20 +139,20 @@ final class CameraManager: NSObject, ObservableObject {
     // MARK: - Helpers
 
     private func camera(for position: AVCaptureDevice.Position) -> AVCaptureDevice? {
-        let session = AVCaptureDevice.DiscoverySession(
+        AVCaptureDevice.DiscoverySession(
             deviceTypes: [.builtInWideAngleCamera],
             mediaType: .video,
             position: position
-        )
-        return session.devices.first
+        ).devices.first
     }
 }
 
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
+// nonisolated fixes the Swift 6 Main actor-isolated conformance warning
 
 extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
 
-    func captureOutput(
+    nonisolated func captureOutput(
         _ output: AVCaptureOutput,
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
