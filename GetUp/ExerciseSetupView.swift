@@ -1,47 +1,62 @@
 // Views/ExerciseSetupView.swift
-// Exercise picker with Strength / Yoga category tabs.
+// Exercise picker with Strength / Yoga / Dance category tabs.
 
 import SwiftUI
+import AVFoundation
 
 struct ExerciseSetupView: View {
     @EnvironmentObject var vm: WorkoutViewModel
     @Environment(\.modelContext) private var modelContext
     @State private var selectedCategory: ExerciseCategory = .strength
 
+    // ── Detail sheet state ──────────────────────────────────────────
+    @State private var selectedDetailExercise: ExerciseDefinition? = nil
+    @State private var showDetailSheet = false
+
     var body: some View {
-        ZStack {
-            Color(hex: "0A0A0F").ignoresSafeArea()
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 0) {
+                headerSection
+                    .padding(.top, 20)
+                    .padding(.bottom, 24)
 
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 0) {
-                    headerSection
-                        .padding(.top, 20)
-                        .padding(.bottom, 24)
+                categoryPicker
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 20)
 
-                    categoryPicker
+                if selectedCategory == .dance {
+                    danceInfoBanner
                         .padding(.horizontal, 20)
-                        .padding(.bottom, 20)
-
-                    exerciseGrid
-                        .padding(.horizontal, 20)
-
-                    configSection
-                        .padding(.horizontal, 20)
-                        .padding(.top, 28)
-
-                    cameraHint
-                        .padding(.horizontal, 20)
-                        .padding(.top, 20)
-
-                    startButton
-                        .padding(.horizontal, 20)
-                        .padding(.top, 28)
-                        .padding(.bottom, 40)
+                        .padding(.bottom, 16)
                 }
+
+                exerciseGrid
+                    .padding(.horizontal, 20)
+
+                configSection
+                    .padding(.horizontal, 20)
+                    .padding(.top, 28)
+
+                cameraHint
+                    .padding(.horizontal, 20)
+                    .padding(.top, 20)
+
+                musicRow
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
+                    .padding(.bottom, 24)
             }
         }
-        .onAppear {
-            vm.modelContext = modelContext
+        .background(Color(hex: "0A0A0F").ignoresSafeArea())
+        // safeAreaInset pins the bar BELOW everything — cannot be covered by nav bars or tab bars
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            stickyStartBar
+        }
+        .onAppear { vm.modelContext = modelContext }
+        .sheet(isPresented: $showDetailSheet) {
+            if let ex = selectedDetailExercise {
+                ExerciseDetailSheet(exercise: ex)
+            }
         }
     }
 
@@ -66,7 +81,6 @@ struct ExerciseSetupView: View {
                 Button(action: {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                         selectedCategory = cat
-                        // Auto-select first exercise in category
                         if let first = ExerciseLibrary.exercises(for: cat).first {
                             vm.selectedExercise = first
                             vm.targetSets = first.defaultSets
@@ -75,8 +89,7 @@ struct ExerciseSetupView: View {
                     }
                 }) {
                     HStack(spacing: 6) {
-                        Text(cat.emoji)
-                            .font(.system(size: 14))
+                        Text(cat.emoji).font(.system(size: 14))
                         Text(cat.rawValue)
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundColor(selectedCategory == cat ? .black : Color(hex: "888899"))
@@ -85,7 +98,7 @@ struct ExerciseSetupView: View {
                     .padding(.vertical, 10)
                     .background(
                         selectedCategory == cat
-                            ? (cat == .yoga ? Color(hex: "B57BFF") : Color(hex: "00C896"))
+                            ? accentColorFor(cat)
                             : Color(hex: "14141E")
                     )
                     .cornerRadius(12)
@@ -101,14 +114,37 @@ struct ExerciseSetupView: View {
         }
     }
 
+    // MARK: - Dance Info Banner
+
+    var danceInfoBanner: some View {
+        HStack(spacing: 14) {
+            Text("🕺")
+                .font(.system(size: 28))
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Timer-based moves")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white)
+                Text("Each dance move runs on a timer. Keep moving for the full duration!")
+                    .font(.system(size: 11))
+                    .foregroundColor(Color(hex: "8888AA"))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+        }
+        .padding(14)
+        .background(Color(hex: "FF6B35").opacity(0.08))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(hex: "FF6B35").opacity(0.25), lineWidth: 1))
+        .cornerRadius(12)
+    }
+
     // MARK: - Exercise Grid
 
     var exerciseGrid: some View {
         let exercises = ExerciseLibrary.exercises(for: selectedCategory)
-        let accentColor = selectedCategory == .yoga ? "B57BFF" : "00C896"
+        let accentHex = accentHexFor(selectedCategory)
 
         return VStack(alignment: .leading, spacing: 14) {
-            Text("EXERCISE")
+            Text(selectedCategory == .dance ? "DANCE MOVE" : "EXERCISE")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundColor(Color(hex: "444460"))
                 .kerning(2)
@@ -118,7 +154,11 @@ struct ExerciseSetupView: View {
                     ExerciseCard(
                         exercise: exercise,
                         isSelected: vm.selectedExercise.id == exercise.id,
-                        accentColor: accentColor
+                        accentColor: accentHex,
+                        onInfo: {
+                            selectedDetailExercise = exercise
+                            showDetailSheet = true
+                        }
                     ) {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                             vm.selectedExercise = exercise
@@ -134,9 +174,11 @@ struct ExerciseSetupView: View {
     // MARK: - Configuration
 
     var configSection: some View {
-        let isYoga = vm.selectedExercise.isHoldPose
-        let repLabel = isYoga ? "Hold (s)" : "Reps"
-        let repIcon  = isYoga ? "timer" : "arrow.clockwise"
+        let isDance = selectedCategory == .dance
+        let isYoga  = vm.selectedExercise.isHoldPose && !isDance
+        let isTimerBased = vm.selectedExercise.isHoldPose
+        let repLabel = isTimerBased ? "Seconds" : "Reps"
+        let repIcon  = isTimerBased ? "timer" : "arrow.clockwise"
 
         return VStack(spacing: 12) {
             Text("CONFIGURATION")
@@ -146,17 +188,27 @@ struct ExerciseSetupView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack(spacing: 12) {
-                ConfigStepper(label: "Sets",    value: $vm.targetSets, range: 1...10, icon: "square.stack.3d.up")
-                ConfigStepper(label: repLabel,  value: $vm.targetReps, range: 1...120, step: isYoga ? 5 : 1, icon: repIcon)
-                ConfigStepper(label: "Rest (s)", value: $vm.restDuration, range: 10...180, step: 10, icon: "bed.double")
+                ConfigStepper(label: "Sets",     value: $vm.targetSets,    range: 1...10, icon: "square.stack.3d.up")
+                ConfigStepper(label: repLabel,   value: $vm.targetReps,    range: 1...120, step: isTimerBased ? 5 : 1, icon: repIcon)
+                ConfigStepper(label: "Rest (s)", value: $vm.restDuration,  range: 10...180, step: 10, icon: "bed.double")
             }
 
-            if isYoga {
+            if isDance {
+                HStack(spacing: 6) {
+                    Image(systemName: "music.note")
+                        .font(.system(size: 11))
+                        .foregroundColor(Color(hex: "FF6B35"))
+                    Text("'Seconds' = how long you dance each set. Try 30s to start!")
+                        .font(.system(size: 11))
+                        .foregroundColor(Color(hex: "666680"))
+                }
+                .padding(.horizontal, 4)
+            } else if isYoga {
                 HStack(spacing: 6) {
                     Image(systemName: "info.circle")
                         .font(.system(size: 11))
                         .foregroundColor(Color(hex: "B57BFF"))
-                    Text("For yoga poses, 'Reps' is how many seconds to hold the pose each set.")
+                    Text("For yoga poses, 'Seconds' is how long to hold the pose each set.")
                         .font(.system(size: 11))
                         .foregroundColor(Color(hex: "666680"))
                 }
@@ -168,82 +220,171 @@ struct ExerciseSetupView: View {
     // MARK: - Camera Hint
 
     var cameraHint: some View {
-        let isYoga = vm.selectedExercise.isHoldPose
-        let iconColor = isYoga ? "B57BFF" : "5BC8FF"
-        let bgColor   = isYoga ? "B57BFF" : "5BC8FF"
+        let accent = accentHexFor(selectedCategory)
 
         return HStack(spacing: 12) {
             Image(systemName: "camera.viewfinder")
                 .font(.system(size: 20))
-                .foregroundColor(Color(hex: iconColor))
+                .foregroundColor(Color(hex: accent))
             Text(vm.selectedExercise.cameraSetup)
                 .font(.system(size: 13))
                 .foregroundColor(Color(hex: "8888AA"))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(16)
-        .background(Color(hex: bgColor).opacity(0.07))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(hex: bgColor).opacity(0.2), lineWidth: 1))
+        .background(Color(hex: accent).opacity(0.07))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(hex: accent).opacity(0.2), lineWidth: 1))
         .cornerRadius(12)
     }
 
-    // MARK: - Start Button
-
-    var startButton: some View {
-        let isYoga    = vm.selectedExercise.isHoldPose
-        let gradient  = isYoga
-            ? [Color(hex: "B57BFF"), Color(hex: "8A4FD8")]
-            : [Color(hex: "00C896"), Color(hex: "00A876")]
-        let glowColor = isYoga ? Color(hex: "B57BFF") : Color(hex: "00C896")
-
-        return Button(action: {
-            vm.modelContext = modelContext
-            vm.startCountdown()
-        }) {
-            HStack(spacing: 10) {
-                Image(systemName: isYoga ? "figure.mind.and.body" : "play.fill")
-                    .font(.system(size: 16, weight: .bold))
-                Text(isYoga ? "START PRACTICE" : "START WORKOUT")
-                    .font(.system(size: 16, weight: .bold))
-                    .kerning(1)
+    // MARK: - Music Row
+    var musicRow: some View {
+        let style: WorkoutMusicStyle = selectedCategory == .dance ? .dance
+            : selectedCategory == .yoga ? .yoga : .strength
+        return VStack(spacing: 10) {
+            HStack {
+                Text("WORKOUT MUSIC").font(.system(size: 11, weight: .bold))
+                    .foregroundColor(Color(hex: "444460")).kerning(2)
+                Spacer()
+                Text("Optional").font(.system(size: 10)).foregroundColor(Color(hex: "333350"))
             }
-            .foregroundColor(.white)
-            .frame(maxWidth: .infinity)
-            .frame(height: 56)
-            .background(LinearGradient(colors: gradient, startPoint: .topLeading, endPoint: .bottomTrailing))
-            .cornerRadius(16)
-            .shadow(color: glowColor.opacity(0.4), radius: 20, y: 8)
+            HStack(spacing: 12) {
+                MusicControlButton(style: style)
+                MusicVolumeSlider()
+            }
+        }
+        .padding(14)
+        .background(Color(hex: "14141E"))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(hex: "1E1E2E"), lineWidth: 1))
+        .cornerRadius(12)
+    }
+
+    // MARK: - Sticky Start Bar
+
+    var stickyStartBar: some View {
+        let isDance      = selectedCategory == .dance
+        let isYoga       = selectedCategory == .yoga
+        let accent       = accentColorFor(selectedCategory)
+        let gradient: [Color] = isDance
+            ? [Color(hex: "FF6B35"), Color(hex: "C93D0E")]
+            : isYoga
+                ? [Color(hex: "B57BFF"), Color(hex: "7B3FD8")]
+                : [Color(hex: "00C896"), Color(hex: "009E74")]
+        let buttonLabel  = isDance ? "Start Dancing" : isYoga ? "Start Practice" : "Start Workout"
+        let buttonIcon   = isDance ? "music.note" : isYoga ? "figure.mind.and.body" : "play.fill"
+        let isTimerBased = vm.selectedExercise.isHoldPose
+        let repSuffix    = isTimerBased ? "s" : " reps"
+
+        return VStack(spacing: 10) {
+            // Divider at top
+            Rectangle().frame(height: 1).foregroundColor(Color(hex: "252535"))
+
+            // Summary row
+            HStack(spacing: 8) {
+                Text(vm.selectedExercise.emoji).font(.system(size: 18))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(vm.selectedExercise.name)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.white).lineLimit(1)
+                    Text("\(vm.targetSets) sets · \(vm.targetReps)\(repSuffix) · \(vm.restDuration)s rest")
+                        .font(.system(size: 11)).foregroundColor(Color(hex: "666680"))
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+
+            // Full-width button
+            Button(action: {
+                vm.modelContext = modelContext
+                // Auto-start matching music if none playing
+                let style: WorkoutMusicStyle = isDance ? .dance : isYoga ? .yoga : .strength
+                if !AudioManager.shared.isPlaying {
+                    AudioManager.shared.play(style: style)
+                }
+                vm.startCountdown()
+            }) {
+                HStack(spacing: 12) {
+                    Image(systemName: buttonIcon).font(.system(size: 18, weight: .bold))
+                    Text(buttonLabel).font(.system(size: 17, weight: .bold)).kerning(0.3)
+                    Spacer()
+                    Image(systemName: "arrow.right").font(.system(size: 15, weight: .bold))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 24)
+                .frame(maxWidth: .infinity).frame(height: 56)
+                .background(LinearGradient(colors: gradient, startPoint: .leading, endPoint: .trailing))
+                .cornerRadius(16)
+                .shadow(color: accent.opacity(0.5), radius: 18, y: 6)
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.12), lineWidth: 1))
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 12)
+        }
+        .background(Color(hex: "0D0D16"))
+    }
+
+
+    // MARK: - Helpers
+
+    private func accentColorFor(_ cat: ExerciseCategory) -> Color {
+        switch cat {
+        case .dance:    return Color(hex: "FF6B35")
+        case .yoga:     return Color(hex: "B57BFF")
+        case .strength: return Color(hex: "00C896")
+        }
+    }
+
+    private func accentHexFor(_ cat: ExerciseCategory) -> String {
+        switch cat {
+        case .dance:    return "FF6B35"
+        case .yoga:     return "B57BFF"
+        case .strength: return "00C896"
         }
     }
 }
 
-// MARK: - Exercise Card (updated with accentColor param)
+// MARK: - Exercise Card
 
 struct ExerciseCard: View {
     let exercise: ExerciseDefinition
     let isSelected: Bool
     let accentColor: String
+    let onInfo: () -> Void      // ← new: fires when ⓘ is tapped
     let action: () -> Void
 
-    init(exercise: ExerciseDefinition, isSelected: Bool, accentColor: String = "00C896", action: @escaping () -> Void) {
+    init(exercise: ExerciseDefinition,
+         isSelected: Bool,
+         accentColor: String = "00C896",
+         onInfo: @escaping () -> Void = {},
+         action: @escaping () -> Void) {
         self.exercise = exercise
         self.isSelected = isSelected
         self.accentColor = accentColor
+        self.onInfo = onInfo
         self.action = action
     }
 
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top) {
+                    Text(exercise.emoji).font(.system(size: 26))
+                    Spacer()
+                    // ── ⓘ Info button ───────────────────────────────
+                    Button(action: onInfo) {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundColor(Color(hex: accentColor).opacity(0.7))
+                    }
+                    .buttonStyle(.plain)   // prevents the outer Button from eating the tap
+                }
                 HStack {
-                    Text(exercise.emoji)
-                        .font(.system(size: 26))
                     if exercise.isHoldPose {
-                        Text("HOLD")
+                        let badge = exercise.category == .dance ? "TIMER" : "HOLD"
+                        Text(badge)
                             .font(.system(size: 8, weight: .bold))
                             .foregroundColor(Color(hex: accentColor))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
+                            .padding(.horizontal, 5).padding(.vertical, 2)
                             .background(Color(hex: accentColor).opacity(0.15))
                             .cornerRadius(4)
                     }
@@ -251,15 +392,13 @@ struct ExerciseCard: View {
                 Text(exercise.name)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(isSelected ? .white : Color(hex: "AAAACC"))
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.8)
+                    .lineLimit(2).minimumScaleFactor(0.8)
                 HStack(spacing: 4) {
                     ForEach(exercise.muscleGroups.prefix(2), id: \.self) { muscle in
                         Text(muscle)
                             .font(.system(size: 9, weight: .medium))
                             .foregroundColor(isSelected ? Color(hex: accentColor) : Color(hex: "555570"))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
+                            .padding(.horizontal, 5).padding(.vertical, 2)
                             .background((isSelected ? Color(hex: accentColor) : Color(hex: "555570")).opacity(0.15))
                             .cornerRadius(4)
                     }
@@ -270,14 +409,15 @@ struct ExerciseCard: View {
             .background(isSelected ? Color(hex: accentColor).opacity(0.12) : Color(hex: "14141E"))
             .overlay(
                 RoundedRectangle(cornerRadius: 14)
-                    .stroke(isSelected ? Color(hex: accentColor).opacity(0.6) : Color(hex: "1E1E2E"), lineWidth: isSelected ? 1.5 : 1)
+                    .stroke(isSelected ? Color(hex: accentColor).opacity(0.6) : Color(hex: "1E1E2E"),
+                            lineWidth: isSelected ? 1.5 : 1)
             )
             .cornerRadius(14)
         }
     }
 }
 
-// MARK: - Config Stepper (unchanged — keep your existing one)
+// MARK: - Config Stepper
 
 struct ConfigStepper: View {
     let label: String
@@ -296,31 +436,22 @@ struct ConfigStepper: View {
                 .foregroundColor(.white)
             Text(label)
                 .font(.system(size: 10, weight: .medium))
-                .foregroundColor(Color(hex: "555570"))
-                .kerning(0.5)
+                .foregroundColor(Color(hex: "555570")).kerning(0.5)
             HStack(spacing: 8) {
                 Button(action: { if value - step >= range.lowerBound { value -= step } }) {
                     Image(systemName: "minus")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(.white)
-                        .frame(width: 28, height: 28)
-                        .background(Color(hex: "1E1E2E"))
-                        .cornerRadius(8)
+                        .font(.system(size: 12, weight: .bold)).foregroundColor(.white)
+                        .frame(width: 28, height: 28).background(Color(hex: "1E1E2E")).cornerRadius(8)
                 }
                 Button(action: { if value + step <= range.upperBound { value += step } }) {
                     Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(.white)
-                        .frame(width: 28, height: 28)
-                        .background(Color(hex: "1E1E2E"))
-                        .cornerRadius(8)
+                        .font(.system(size: 12, weight: .bold)).foregroundColor(.white)
+                        .frame(width: 28, height: 28).background(Color(hex: "1E1E2E")).cornerRadius(8)
                 }
             }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 14)
-        .background(Color(hex: "14141E"))
-        .cornerRadius(14)
+        .frame(maxWidth: .infinity).padding(.vertical, 14)
+        .background(Color(hex: "14141E")).cornerRadius(14)
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(hex: "1E1E2E"), lineWidth: 1))
     }
 }
