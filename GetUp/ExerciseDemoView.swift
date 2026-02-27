@@ -160,10 +160,16 @@ struct LateralRaiseFigure: View {
     var body: some View {
         Canvas { ctx, sz in
             let w=sz.width, h=sz.height, s=min(w,h), lw=s*0.054
-            let lEx=w*0.41-s*0.26, lEy=h*0.29
-            let lWx=max(w*0.41-s*0.46, w*0.05), lWy=h*0.28
-            let rEx=w*0.59+s*0.26, rEy=h*0.29
-            let rWx=min(w*0.59+s*0.46, w*0.95), rWy=h*0.28
+            let t = CGFloat(phase)
+            // Smooth up-down cycle: 0 = arms at sides, 1 = arms at shoulder height
+            let armRaise = CGFloat(abs(sin(Double(t) * .pi)))
+            let lEy = h*0.42 - armRaise*h*0.14
+            let lWy = h*0.44 - armRaise*h*0.16
+            let lEx = w*0.41 - s*0.16*armRaise
+            let lWx = max(w*0.41 - s*0.36*armRaise, w*0.06)
+            let rEy = lEy; let rWy = lWy
+            let rEx = w*0.59 + s*0.16*armRaise
+            let rWx = min(w*0.59 + s*0.36*armRaise, w*0.94)
             limb(&ctx, w*0.44,h*0.58, w*0.40,h*0.78, lw, color)
             limb(&ctx, w*0.40,h*0.78, w*0.39,h*0.95, lw*0.85, color)
             limb(&ctx, w*0.56,h*0.58, w*0.60,h*0.78, lw, color)
@@ -175,11 +181,16 @@ struct LateralRaiseFigure: View {
             limb(&ctx, rEx,rEy, rWx,rWy, lw*0.85, color)
             dumbbell(&ctx, lWx, lWy, s*0.034)
             dumbbell(&ctx, rWx, rWy, s*0.034)
-            var guide = Path()
-            guide.move(to:CGPoint(x:w*0.06, y:h*0.28))
-            guide.addLine(to:CGPoint(x:w*0.94, y:h*0.28))
-            ctx.stroke(guide, with:.color(color.opacity(0.30)), style:StrokeStyle(lineWidth:1.5, dash:[5,4]))
-            label(&ctx, "Shoulder height ✓", w*0.50, h*0.20, color)
+            // Shoulder-height guide line appears as arms reach top
+            if armRaise > 0.7 {
+                let alpha = Double((armRaise - 0.7) / 0.3)
+                var guide = Path()
+                guide.move(to:CGPoint(x:w*0.05, y:lWy))
+                guide.addLine(to:CGPoint(x:w*0.95, y:lWy))
+                ctx.stroke(guide, with:.color(color.opacity(0.35*alpha)),
+                           style:StrokeStyle(lineWidth:1.5, dash:[5,4]))
+                if armRaise > 0.88 { label(&ctx, "Shoulder height ✓", w*0.50, lWy-14, color) }
+            }
             joint(&ctx, lEx,lEy, s*0.030, color)
             joint(&ctx, rEx,rEy, s*0.030, color)
             limb(&ctx, w*0.50,h*0.15, w*0.50,h*0.24, s*0.07, color)
@@ -259,21 +270,26 @@ struct WarriorOneFigure: View {
     var body: some View {
         Canvas { ctx, sz in
             let w=sz.width, h=sz.height, s=min(w,h), lw=s*0.056
+            // BIG visible breathing: chest expands and arms float up/down clearly
+            let breathCycle = CGFloat(sin(phase * .pi * 2))
+            let breath    = breathCycle * s * 0.022       // torso width pulse
+            let armFloat  = breathCycle * h * 0.055       // arms rise/fall visibly
+            let headFloat = breathCycle * h * 0.018       // head follows breath
             limb(&ctx, w*0.52,h*0.55, w*0.64,h*0.74, lw, color, 0.45)
             limb(&ctx, w*0.64,h*0.74, w*0.70,h*0.94, lw*0.85, color, 0.45)
             limb(&ctx, w*0.48,h*0.55, w*0.34,h*0.72, lw, color)
             limb(&ctx, w*0.34,h*0.72, w*0.28,h*0.94, lw*0.85, color)
             label(&ctx, "90°", w*0.18, h*0.70, color, size:12)
-            torso(&ctx, w*0.41,h*0.26, w*0.59,h*0.55, color)
-            limb(&ctx, w*0.42,h*0.30, w*0.36,h*0.14, lw, color)
-            limb(&ctx, w*0.36,h*0.14, w*0.40,h*0.02, lw*0.85, color)
-            limb(&ctx, w*0.58,h*0.30, w*0.64,h*0.14, lw, color)
-            limb(&ctx, w*0.64,h*0.14, w*0.60,h*0.02, lw*0.85, color)
+            torso(&ctx, w*0.41-breath, h*0.26, w*0.59+breath, h*0.55, color)
+            limb(&ctx, w*0.42,h*0.30, w*0.36,h*0.14+armFloat, lw, color)
+            limb(&ctx, w*0.36,h*0.14+armFloat, w*0.40,h*0.02+armFloat, lw*0.85, color)
+            limb(&ctx, w*0.58,h*0.30, w*0.64,h*0.14+armFloat, lw, color)
+            limb(&ctx, w*0.64,h*0.14+armFloat, w*0.60,h*0.02+armFloat, lw*0.85, color)
             joint(&ctx, w*0.34,h*0.72, s*0.034, color)
-            joint(&ctx, w*0.36,h*0.14, s*0.028, color)
-            joint(&ctx, w*0.64,h*0.14, s*0.028, color)
-            limb(&ctx, w*0.50,h*0.16, w*0.50,h*0.26, s*0.07, color)
-            head(&ctx, w*0.50,h*0.10, s*0.08, color)
+            joint(&ctx, w*0.36,h*0.14+armFloat, s*0.028, color)
+            joint(&ctx, w*0.64,h*0.14+armFloat, s*0.028, color)
+            limb(&ctx, w*0.50,h*0.16+headFloat, w*0.50,h*0.26, s*0.07, color)
+            head(&ctx, w*0.50,h*0.09+headFloat, s*0.08, color)
         }
     }
 }
@@ -283,16 +299,21 @@ struct WarriorTwoFigure: View {
     var body: some View {
         Canvas { ctx, sz in
             let w=sz.width, h=sz.height, s=min(w,h), lw=s*0.052
+            let breath = CGFloat(sin(phase * .pi * 2))
+            // Clearly visible arm extension on inhale (was 0.012, now 0.045)
+            let armExt  = breath * w * 0.045
+            let chestExp = abs(breath) * s * 0.020
             limb(&ctx, w*0.44,h*0.54, w*0.30,h*0.71, lw, color)
             limb(&ctx, w*0.30,h*0.71, w*0.22,h*0.94, lw*0.85, color)
             limb(&ctx, w*0.56,h*0.54, w*0.66,h*0.72, lw, color, 0.5)
             limb(&ctx, w*0.66,h*0.72, w*0.74,h*0.94, lw*0.85, color, 0.5)
-            torso(&ctx, w*0.41,h*0.26, w*0.59,h*0.54, color)
-            limb(&ctx, w*0.41,h*0.32, w*0.18,h*0.32, lw, color)
-            limb(&ctx, w*0.18,h*0.32, w*0.03,h*0.32, lw*0.85, color)
-            limb(&ctx, w*0.59,h*0.32, w*0.82,h*0.32, lw, color)
-            limb(&ctx, w*0.82,h*0.32, w*0.97,h*0.32, lw*0.85, color)
-            var g=Path(); g.move(to:CGPoint(x:w*0.02,y:h*0.30)); g.addLine(to:CGPoint(x:w*0.98,y:h*0.30))
+            torso(&ctx, w*0.41-chestExp, h*0.26, w*0.59+chestExp, h*0.54, color)
+            limb(&ctx, w*0.41,h*0.32, w*0.18-armExt,h*0.32, lw, color)
+            limb(&ctx, w*0.18-armExt,h*0.32, max(w*0.03-armExt, w*0.01),h*0.32, lw*0.85, color)
+            limb(&ctx, w*0.59,h*0.32, w*0.82+armExt,h*0.32, lw, color)
+            limb(&ctx, w*0.82+armExt,h*0.32, min(w*0.97+armExt, w*0.99),h*0.32, lw*0.85, color)
+            var g=Path()
+            g.move(to:CGPoint(x:w*0.02,y:h*0.30)); g.addLine(to:CGPoint(x:w*0.98,y:h*0.30))
             ctx.stroke(g, with:.color(color.opacity(0.22)), style:StrokeStyle(lineWidth:1.5,dash:[5,4]))
             label(&ctx, "Arms parallel ✓", w*0.50,h*0.20, color)
             joint(&ctx, w*0.30,h*0.71, s*0.034, color)
@@ -307,21 +328,26 @@ struct TreePoseFigure: View {
     var body: some View {
         Canvas { ctx, sz in
             let w=sz.width, h=sz.height, s=min(w,h), lw=s*0.054
-            var bal=Path(); bal.move(to:CGPoint(x:w*0.52,y:h*0.16)); bal.addLine(to:CGPoint(x:w*0.52,y:h*0.95))
+            // Clearly visible balance sway (was 0.018 → 0.055)
+            let sway     = CGFloat(sin(phase * .pi * 2)) * w * 0.055
+            let armFloat = CGFloat(sin(phase * .pi * 2)) * h * 0.050
+            var bal=Path()
+            bal.move(to:CGPoint(x:w*0.52,y:h*0.16))
+            bal.addLine(to:CGPoint(x:w*0.52,y:h*0.95))
             ctx.stroke(bal, with:.color(color.opacity(0.16)), style:StrokeStyle(lineWidth:1.5,dash:[4,5]))
-            limb(&ctx, w*0.54,h*0.56, w*0.54,h*0.76, lw, color)
-            limb(&ctx, w*0.54,h*0.76, w*0.55,h*0.95, lw*0.85, color)
-            limb(&ctx, w*0.48,h*0.56, w*0.32,h*0.65, lw, color)
-            limb(&ctx, w*0.32,h*0.65, w*0.43,h*0.75, lw*0.85, color)
-            torso(&ctx, w*0.41,h*0.26, w*0.59,h*0.56, color)
-            limb(&ctx, w*0.42,h*0.30, w*0.37,h*0.14, lw, color)
-            limb(&ctx, w*0.37,h*0.14, w*0.46,h*0.03, lw*0.85, color)
-            limb(&ctx, w*0.58,h*0.30, w*0.63,h*0.14, lw, color)
-            limb(&ctx, w*0.63,h*0.14, w*0.54,h*0.03, lw*0.85, color)
-            joint(&ctx, w*0.32,h*0.65, s*0.032, color)
-            joint(&ctx, w*0.54,h*0.76, s*0.032, color)
-            limb(&ctx, w*0.50,h*0.16, w*0.50,h*0.26, s*0.07, color)
-            head(&ctx, w*0.50,h*0.10, s*0.08, color)
+            limb(&ctx, w*0.54+sway,h*0.56, w*0.54+sway,h*0.76, lw, color)
+            limb(&ctx, w*0.54+sway,h*0.76, w*0.55+sway,h*0.95, lw*0.85, color)
+            limb(&ctx, w*0.48+sway,h*0.56, w*0.32+sway*0.5,h*0.65, lw, color)
+            limb(&ctx, w*0.32+sway*0.5,h*0.65, w*0.43+sway*0.5,h*0.75, lw*0.85, color)
+            torso(&ctx, w*0.41+sway,h*0.26, w*0.59+sway,h*0.56, color)
+            limb(&ctx, w*0.42+sway,h*0.30, w*0.37+sway,h*0.14+armFloat, lw, color)
+            limb(&ctx, w*0.37+sway,h*0.14+armFloat, w*0.46+sway,h*0.03+armFloat, lw*0.85, color)
+            limb(&ctx, w*0.58+sway,h*0.30, w*0.63+sway,h*0.14+armFloat, lw, color)
+            limb(&ctx, w*0.63+sway,h*0.14+armFloat, w*0.54+sway,h*0.03+armFloat, lw*0.85, color)
+            joint(&ctx, w*0.32+sway*0.5,h*0.65, s*0.032, color)
+            joint(&ctx, w*0.54+sway,h*0.76, s*0.032, color)
+            limb(&ctx, w*0.50+sway,h*0.16, w*0.50+sway,h*0.26, s*0.07, color)
+            head(&ctx, w*0.50+sway,h*0.10, s*0.08, color)
         }
     }
 }
@@ -331,7 +357,9 @@ struct DownwardDogFigure: View {
     var body: some View {
         Canvas { ctx, sz in
             let w=sz.width, h=sz.height, s=min(w,h), lw=s*0.052
-            let hX=w*0.50, hY=h*0.14
+            // Clearly visible hip pump (was 0.022 → 0.065)
+            let hipPulse = CGFloat(sin(phase * .pi * 2)) * h * 0.065
+            let hX=w*0.50, hY=h*0.14-hipPulse
             let lSx=w*0.36, lSy=h*0.36
             let lHx=w*0.18, lHy=h*0.76
             let lFx=w*0.30, lFy=h*0.90
@@ -340,7 +368,7 @@ struct DownwardDogFigure: View {
             let rFx=w*0.70, rFy=h*0.90
             let rHx=w*0.82, rHy=h*0.76
             let rSx=w*0.64, rSy=h*0.36
-            label(&ctx, "Hips HIGH ↑", w*0.50, h*0.06, color)
+            label(&ctx, "Hips HIGH ↑", w*0.50, h*0.04, color)
             limb(&ctx, hX,hY, lKx,lKy, lw, color)
             limb(&ctx, lKx,lKy, lFx,lFy, lw*0.85, color)
             limb(&ctx, hX,hY, rKx,rKy, lw, color, 0.55)
@@ -363,20 +391,24 @@ struct ChairPoseFigure: View {
     var body: some View {
         Canvas { ctx, sz in
             let w=sz.width, h=sz.height, s=min(w,h), lw=s*0.056
-            limb(&ctx, w*0.44,h*0.62, w*0.38,h*0.80, lw, color)
-            limb(&ctx, w*0.38,h*0.80, w*0.38,h*0.95, lw*0.85, color)
-            limb(&ctx, w*0.56,h*0.62, w*0.62,h*0.80, lw, color)
-            limb(&ctx, w*0.62,h*0.80, w*0.62,h*0.95, lw*0.85, color)
+            // Clearly visible squat pulse (was 0.025 → 0.060)
+            let sink     = CGFloat(abs(sin(phase * .pi * 2))) * h * 0.060
+            let armFloat = CGFloat(sin(phase * .pi * 2)) * h * 0.050
+            limb(&ctx, w*0.44,h*0.62+sink, w*0.38,h*0.80+sink*0.5, lw, color)
+            limb(&ctx, w*0.38,h*0.80+sink*0.5, w*0.38,h*0.95, lw*0.85, color)
+            limb(&ctx, w*0.56,h*0.62+sink, w*0.62,h*0.80+sink*0.5, lw, color)
+            limb(&ctx, w*0.62,h*0.80+sink*0.5, w*0.62,h*0.95, lw*0.85, color)
             var seat=Path()
-            seat.move(to:CGPoint(x:w*0.28,y:h*0.68)); seat.addLine(to:CGPoint(x:w*0.72,y:h*0.68))
+            seat.move(to:CGPoint(x:w*0.28,y:h*0.68+sink*0.5))
+            seat.addLine(to:CGPoint(x:w*0.72,y:h*0.68+sink*0.5))
             ctx.stroke(seat, with:.color(color.opacity(0.22)), style:StrokeStyle(lineWidth:2,dash:[6,5]))
-            torso(&ctx, w*0.41,h*0.30, w*0.59,h*0.62, color)
-            limb(&ctx, w*0.42,h*0.34, w*0.34,h*0.18, lw, color)
-            limb(&ctx, w*0.34,h*0.18, w*0.38,h*0.04, lw*0.85, color)
-            limb(&ctx, w*0.58,h*0.34, w*0.66,h*0.18, lw, color)
-            limb(&ctx, w*0.66,h*0.18, w*0.62,h*0.04, lw*0.85, color)
-            joint(&ctx, w*0.38,h*0.80, s*0.033, color)
-            joint(&ctx, w*0.62,h*0.80, s*0.033, color)
+            torso(&ctx, w*0.41,h*0.30, w*0.59,h*0.62+sink, color)
+            limb(&ctx, w*0.42,h*0.34, w*0.34,h*0.18+armFloat, lw, color)
+            limb(&ctx, w*0.34,h*0.18+armFloat, w*0.38,h*0.04+armFloat, lw*0.85, color)
+            limb(&ctx, w*0.58,h*0.34, w*0.66,h*0.18+armFloat, lw, color)
+            limb(&ctx, w*0.66,h*0.18+armFloat, w*0.62,h*0.04+armFloat, lw*0.85, color)
+            joint(&ctx, w*0.38,h*0.80+sink*0.5, s*0.033, color)
+            joint(&ctx, w*0.62,h*0.80+sink*0.5, s*0.033, color)
             limb(&ctx, w*0.50,h*0.18, w*0.50,h*0.30, s*0.07, color)
             head(&ctx, w*0.50,h*0.11, s*0.08, color)
         }
@@ -935,7 +967,6 @@ struct InfoPill: View {
 struct ExerciseDetailSheet: View {
     let exercise: ExerciseDefinition
     @Environment(\.dismiss) private var dismiss
-    @State private var showTimer = false
 
     var musicStyle: WorkoutMusicStyle {
         switch exercise.category {
@@ -979,24 +1010,6 @@ struct ExerciseDetailSheet: View {
                     }
                     Text(exercise.description).font(.system(size:15)).foregroundColor(Color(hex:"AAAACC"))
                         .multilineTextAlignment(.center).padding(.horizontal,24)
-                    if exercise.isHoldPose {
-                        VStack(spacing:8) {
-                            Text("HOLD TIMER PREVIEW").font(.system(size:11, weight:.bold))
-                                .foregroundColor(Color(hex:"444460")).kerning(2)
-                            Text("During your workout this timer counts down your hold")
-                                .font(.system(size:12)).foregroundColor(Color(hex:"666680")).multilineTextAlignment(.center)
-                            YogaHoldTimerView(targetSeconds:min(exercise.defaultReps,10), isActive:$showTimer) { showTimer=false }
-                            Button(action:{ showTimer.toggle() }) {
-                                Text(showTimer ? "Stop Preview" : "Preview Timer")
-                                    .font(.system(size:13, weight:.semibold)).foregroundColor(accentColor)
-                                    .padding(.horizontal,20).padding(.vertical,8)
-                                    .background(accentColor.opacity(0.12)).cornerRadius(20)
-                            }
-                        }
-                        .padding(16).background(Color(hex:"14141E")).cornerRadius(16)
-                        .overlay(RoundedRectangle(cornerRadius:16).stroke(accentColor.opacity(0.2),lineWidth:1))
-                        .padding(.horizontal,24)
-                    }
                     instructionsSection
                     HStack(spacing:12) {
                         Image(systemName:"camera.viewfinder").font(.system(size:18)).foregroundColor(accentColor)
@@ -1034,7 +1047,7 @@ struct ExerciseDetailSheet: View {
                 }
             }
         }
-        .onDisappear { showTimer = false }
+        .onDisappear { AudioManager.shared.stop() }
     }
 
     var instructionsSection: some View {
