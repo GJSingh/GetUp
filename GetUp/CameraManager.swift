@@ -14,6 +14,7 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var isRunning = false
     @Published var isCameraAuthorised = false
     @Published var errorMessage: String?
+    @Published var zoomFactor: CGFloat = 1.0   // live zoom level, read by ZoomHUD
 
     // MARK: Capture Session
     let captureSession = AVCaptureSession()
@@ -26,6 +27,8 @@ final class CameraManager: NSObject, ObservableObject {
 
     // MARK: Camera Position
     private(set) var position: AVCaptureDevice.Position = .back
+    // Tracked so zoom can always target the active device
+    private var currentDevice: AVCaptureDevice?
 
     override init() {
         super.init()
@@ -72,8 +75,7 @@ final class CameraManager: NSObject, ObservableObject {
                 return
             }
             self.captureSession.addInput(input)
-
-            // KEY FIX: pass nil as queue so the delegate is called on sessionQueue
+            self.currentDevice = device   // track for zoom
             // and mark captureOutput as nonisolated below — this resolves the Swift 6 warning
             self.videoOutput.setSampleBufferDelegate(self, queue: self.sessionQueue)
             self.videoOutput.alwaysDiscardsLateVideoFrames = true
@@ -128,6 +130,7 @@ final class CameraManager: NSObject, ObservableObject {
                 return
             }
             self.captureSession.addInput(input)
+            self.currentDevice = device   // track for zoom after flip
 
             if let connection = self.videoOutput.connection(with: .video) {
                 connection.isVideoMirrored = (self.position == .front)
@@ -135,6 +138,29 @@ final class CameraManager: NSObject, ObservableObject {
             self.captureSession.commitConfiguration()
         }
     }
+
+    // MARK: - Zoom
+
+    /// Set zoom level. Safe to call from any thread.
+    /// Clamped to 1× … min(device max, 8×).
+    func setZoom(_ factor: CGFloat) {
+        sessionQueue.async { [weak self] in
+            guard let self, let device = self.currentDevice else { return }
+            let maxZoom = min(device.activeFormat.videoMaxZoomFactor, 8.0)
+            let clamped = max(1.0, min(factor, maxZoom))
+            do {
+                try device.lockForConfiguration()
+                device.videoZoomFactor = clamped
+                device.unlockForConfiguration()
+            } catch {
+                print("CameraManager.setZoom error: \(error)")
+            }
+            DispatchQueue.main.async { self.zoomFactor = clamped }
+        }
+    }
+
+    func zoomIn()  { setZoom(zoomFactor + 0.5) }
+    func zoomOut() { setZoom(max(1.0, zoomFactor - 0.5)) }
 
     // MARK: - Helpers
 

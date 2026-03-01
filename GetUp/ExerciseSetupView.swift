@@ -10,8 +10,9 @@ struct ExerciseSetupView: View {
     @State private var selectedCategory: ExerciseCategory = .strength
 
     // ── Detail sheet state ──────────────────────────────────────────
+    // Using .sheet(item:) not .sheet(isPresented:) to avoid the race where
+    // selectedDetailExercise is nil when the sheet closure first evaluates.
     @State private var selectedDetailExercise: ExerciseDefinition? = nil
-    @State private var showDetailSheet = false
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -53,10 +54,8 @@ struct ExerciseSetupView: View {
             stickyStartBar
         }
         .onAppear { vm.modelContext = modelContext }
-        .sheet(isPresented: $showDetailSheet) {
-            if let ex = selectedDetailExercise {
-                ExerciseDetailSheet(exercise: ex)
-            }
+        .sheet(item: $selectedDetailExercise) { ex in
+            ExerciseDetailSheet(exercise: ex)
         }
     }
 
@@ -157,7 +156,6 @@ struct ExerciseSetupView: View {
                         accentColor: accentHex,
                         onInfo: {
                             selectedDetailExercise = exercise
-                            showDetailSheet = true
                         }
                     ) {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
@@ -239,24 +237,10 @@ struct ExerciseSetupView: View {
 
     // MARK: - Music Row
     var musicRow: some View {
-        let style: WorkoutMusicStyle = selectedCategory == .dance ? .dance
+        let category: WorkoutMusicCategory = selectedCategory == .dance ? .dance
             : selectedCategory == .yoga ? .yoga : .strength
-        return VStack(spacing: 10) {
-            HStack {
-                Text("WORKOUT MUSIC").font(.system(size: 11, weight: .bold))
-                    .foregroundColor(Color(hex: "444460")).kerning(2)
-                Spacer()
-                Text("Optional").font(.system(size: 10)).foregroundColor(Color(hex: "333350"))
-            }
-            HStack(spacing: 12) {
-                MusicControlButton(style: style)
-                MusicVolumeSlider()
-            }
-        }
-        .padding(14)
-        .background(Color(hex: "14141E"))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(hex: "1E1E2E"), lineWidth: 1))
-        .cornerRadius(12)
+        let accent = accentColorFor(selectedCategory)
+        return MusicGenrePicker(category: category, accentColor: accent)
     }
 
     // MARK: - Sticky Start Bar
@@ -297,9 +281,9 @@ struct ExerciseSetupView: View {
             Button(action: {
                 vm.modelContext = modelContext
                 // Auto-start matching music if none playing
-                let style: WorkoutMusicStyle = isDance ? .dance : isYoga ? .yoga : .strength
+                let category: WorkoutMusicCategory = isDance ? .dance : isYoga ? .yoga : .strength
                 if !AudioManager.shared.isPlaying {
-                    AudioManager.shared.play(style: style)
+                    AudioManager.shared.play(genre: AudioManager.defaultGenre(for: category))
                 }
                 vm.startCountdown()
             }) {

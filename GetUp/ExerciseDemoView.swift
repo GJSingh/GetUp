@@ -968,7 +968,7 @@ struct ExerciseDetailSheet: View {
     let exercise: ExerciseDefinition
     @Environment(\.dismiss) private var dismiss
 
-    var musicStyle: WorkoutMusicStyle {
+    var musicCategory: WorkoutMusicCategory {
         switch exercise.category {
         case .yoga:   return .yoga
         case .dance:  return .dance
@@ -1025,19 +1025,8 @@ struct ExerciseDetailSheet: View {
                     }
 
                     // ── Music ──────────────────────────────────────────────
-                    VStack(spacing:10) {
-                        HStack {
-                            Text("WORKOUT MUSIC").font(.system(size:11, weight:.bold))
-                                .foregroundColor(Color(hex:"444460")).kerning(2)
-                            Spacer()
-                        }
-                        MusicControlButton(style: musicStyle)
-                        MusicVolumeSlider()
-                            .padding(.horizontal, 4)
-                    }
-                    .padding(16).background(Color(hex:"14141E")).cornerRadius(16)
-                    .overlay(RoundedRectangle(cornerRadius:16).stroke(accentColor.opacity(0.18), lineWidth:1))
-                    .padding(.horizontal,24)
+                    MusicGenrePicker(category: musicCategory, accentColor: accentColor)
+                        .padding(.horizontal,24)
 
                     Button(action:{ dismiss() }) {
                         Text("Got it — let's go!").font(.system(size:15, weight:.semibold)).foregroundColor(.black)
@@ -1047,7 +1036,10 @@ struct ExerciseDetailSheet: View {
                 }
             }
         }
-        .onDisappear { AudioManager.shared.stop() }
+        .onDisappear {
+            // Stop music when demo sheet is dismissed (don't bleed into rest of app)
+            AudioManager.shared.stop()
+        }
     }
 
     var instructionsSection: some View {

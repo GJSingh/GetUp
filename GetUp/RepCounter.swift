@@ -1,168 +1,170 @@
 // Services/RepCounter.swift
-// Detects completed reps by watching the angle of the primary joint over time.
-// Uses a simple state machine: start → mid → peak → start = 1 rep
+// Counts reps by tracking joint angle crossing two thresholds.
+// Uses RepPhase from ExerciseLibrary.swift — do NOT redeclare it here.
+// WorkoutState lives in WorkoutViewModel.swift — do NOT redeclare it here.
 
 import Foundation
-import Combine
+import Combine   // required for @Published and ObservableObject
+import UIKit
 
 // MARK: - RepCounter
 
+@MainActor
 final class RepCounter: ObservableObject {
 
-    // MARK: State
-    @Published private(set) var currentReps: Int = 0
-    @Published private(set) var currentSet: Int = 1
-    @Published private(set) var isResting: Bool = false
-    @Published private(set) var restSecondsRemaining: Int = 0
-    @Published private(set) var isWorkoutComplete: Bool = false
+    // MARK: - Published State
 
-    var targetReps: Int
-    var targetSets: Int
-    var restDurationSeconds: Int
+    @Published var currentReps: Int = 0
+    @Published var currentSet:  Int = 1
 
-    // Rep detection thresholds (angles in degrees)
-    // These are tuned for bicep curl — WorkoutViewModel overrides per-exercise
-    var peakAngleThreshold: Double = 65.0      // angle below this = "top of rep"
-    var startAngleThreshold: Double = 140.0    // angle above this = "bottom of rep"
+    // MARK: - Configuration
 
-    private enum Phase { case atStart, movingToPeak, atPeak, movingToStart }
-    private var phase: Phase = .atStart
-    private var angleHistory: [Double] = []
-    private var restTimer: AnyCancellable?
+    /// Angle (degrees) the joint must reach to count as "at peak" (e.g. 40° for bicep curl).
+    var peakAngleThreshold:  Double = 40
+    /// Angle (degrees) the joint must return to before another rep can start (e.g. 150° for bicep curl).
+    var startAngleThreshold: Double = 150
+    /// How many seconds to rest between sets.
+    var restDurationSeconds: Int = 60
 
-    // MARK: Callbacks
+    private(set) var targetReps: Int = 12
+    private(set) var targetSets: Int = 3
+
+    // MARK: - Callbacks
+
+    /// Fires on the main thread when a single rep is completed.
     var onRepCompleted: (() -> Void)?
-    var onSetCompleted: ((Int) -> Void)?       // passes the completed set number
+    /// Fires on the main thread when a full set is completed. Passes the set number that just finished.
+    var onSetCompleted: ((Int) -> Void)?
+    /// Fires on the main thread when the rest timer reaches zero.
+    var onRestCompleted: (() -> Void)?
+    /// Fires on the main thread when all sets are done.
     var onWorkoutComplete: (() -> Void)?
 
-    init(targetReps: Int = 12, targetSets: Int = 3, restDuration: Int = 60) {
+    // MARK: - Private
+
+    // RepPhase is declared in ExerciseLibrary.swift: .start / .midMovement / .peak
+    private var repPhase: RepPhase = .start
+    private var restTimer: Timer?
+    private let hysteresis: Double = 10   // degrees — prevents edge-case double-counting
+
+    // MARK: - Setup / Reset
+
+    /// Configure before starting a workout.
+    func reset(targetReps: Int, targetSets: Int) {
         self.targetReps = targetReps
         self.targetSets = targetSets
-        self.restDurationSeconds = restDuration
+        reset()
     }
 
-    // MARK: - Feed Angle
-    // Called every frame with the primary joint angle
+    /// Reset counters without changing targets (used by endWorkout / resetToSetup).
+    func reset() {
+        currentReps = 0
+        currentSet  = 1
+        repPhase    = .start
+        restTimer?.invalidate()
+        restTimer   = nil
+    }
 
-    func feedAngle(_ angle: Double) {
-        guard !isResting, !isWorkoutComplete else { return }
+    // MARK: - Angle Feed
 
-        // Smooth the angle with a simple moving average to reduce noise
-        angleHistory.append(angle)
-        if angleHistory.count > 5 { angleHistory.removeFirst() }
-        let smoothed = angleHistory.reduce(0, +) / Double(angleHistory.count)
+    /// Call on every camera frame with the computed joint angle (degrees).
+    /// Thread-safe: marshals to main actor internally.
+    nonisolated func feedAngle(_ angle: Double) {
+        Task { @MainActor [weak self] in
+            self?.advanceStateMachine(angle: angle)
+        }
+    }
 
-        switch phase {
-        case .atStart:
-            if smoothed < peakAngleThreshold - 10 {
-                phase = .movingToPeak
+    // MARK: - State Machine
+
+    private func advanceStateMachine(angle: Double) {
+        // All exercises use inverted movement: start at large angle (arm extended),
+        // peak at small angle (arm contracted / squat depth / etc.)
+        switch repPhase {
+
+        case .start:
+            // User is at starting position. Rep begins when they move away.
+            if angle < startAngleThreshold - hysteresis {
+                repPhase = .midMovement
             }
 
-        case .movingToPeak:
-            if smoothed < peakAngleThreshold {
-                phase = .atPeak
-            } else if smoothed > startAngleThreshold {
-                // Went back without completing — reset
-                phase = .atStart
+        case .midMovement:
+            if angle <= peakAngleThreshold {
+                // Reached the peak — count the rep
+                repPhase = .peak
+                repCompleted()
+            } else if angle >= startAngleThreshold {
+                // Returned to start without reaching peak — reset, don't count
+                repPhase = .start
             }
 
-        case .atPeak:
-            if smoothed > startAngleThreshold - 10 {
-                phase = .movingToStart
-            }
-
-        case .movingToStart:
-            if smoothed > startAngleThreshold {
-                // Rep complete!
-                phase = .atStart
-                angleHistory.removeAll()
-                registerRep()
+        case .peak:
+            // Wait for them to return toward the start position
+            if angle >= startAngleThreshold - hysteresis {
+                repPhase = .start
             }
         }
     }
 
-    // MARK: - Register Rep
+    // MARK: - Rep / Set Completion
 
-    private func registerRep() {
+    private func repCompleted() {
         currentReps += 1
+
+        let impact = UIImpactFeedbackGenerator(style: .medium)
+        impact.impactOccurred()
+
         onRepCompleted?()
 
         if currentReps >= targetReps {
-            completeSet()
+            setCompleted()
         }
     }
 
-    // MARK: - Set Management
+    private func setCompleted() {
+        let finishedSet = currentSet   // capture BEFORE incrementing
 
-    private func completeSet() {
-        let justCompleted = currentSet
-        onSetCompleted?(justCompleted)
+        let notify = UINotificationFeedbackGenerator()
+        notify.notificationOccurred(.success)
 
-        if currentSet >= targetSets {
-            isWorkoutComplete = true
+        onSetCompleted?(finishedSet)   // tell VM which set just finished
+
+        if finishedSet >= targetSets {
+            // All sets done
             onWorkoutComplete?()
         } else {
-            startRest()
+            // More sets to go — increment set counter, reset reps, start rest
+            currentSet  += 1
+            currentReps  = 0
+            repPhase     = .start   // CRITICAL: reset phase so the new set detects correctly
+            startRestTimer()
         }
     }
 
-    private func startRest() {
-        isResting = true
-        restSecondsRemaining = restDurationSeconds
+    // MARK: - Rest Timer
 
-        restTimer = Timer.publish(every: 1, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                guard let self else { return }
-                self.restSecondsRemaining -= 1
-                if self.restSecondsRemaining <= 0 {
-                    self.endRest()
+    private func startRestTimer() {
+        var remaining = restDurationSeconds
+        restTimer?.invalidate()
+        restTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            Task { @MainActor [weak self] in
+                guard let self else { timer.invalidate(); return }
+                remaining -= 1
+                if remaining <= 0 {
+                    timer.invalidate()
+                    self.restTimer = nil
+                    self.repPhase = .start   // ensure clean phase on rest-end auto-resume
+                    self.onRestCompleted?()  // VM will set state = .active
                 }
             }
+        }
     }
 
+    /// Called when user taps "Skip Rest".
     func skipRest() {
-        restTimer?.cancel()
-        endRest()
-    }
-
-    private func endRest() {
-        restTimer?.cancel()
-        isResting = false
-        restSecondsRemaining = 0
-        currentSet += 1
-        currentReps = 0
-        phase = .atStart
-        angleHistory.removeAll()
-    }
-
-    // MARK: - Reset
-
-    func reset(targetReps: Int? = nil, targetSets: Int? = nil) {
-        restTimer?.cancel()
-        currentReps = 0
-        currentSet = 1
-        isResting = false
-        restSecondsRemaining = 0
-        isWorkoutComplete = false
-        phase = .atStart
-        angleHistory.removeAll()
-        if let r = targetReps { self.targetReps = r }
-        if let s = targetSets { self.targetSets = s }
-    }
-
-    // MARK: - Progress
-
-    var setProgress: Double {
-        guard targetSets > 0 else { return 0 }
-        let completedSets = Double(currentSet - 1)
-        let currentSetFraction = Double(currentReps) / Double(targetReps)
-        return (completedSets + currentSetFraction) / Double(targetSets)
-    }
-
-    var statusText: String {
-        if isWorkoutComplete { return "Workout Complete! 🎉" }
-        if isResting { return "Rest — next set in \(restSecondsRemaining)s" }
-        return "Set \(currentSet) of \(targetSets)"
+        restTimer?.invalidate()
+        restTimer = nil
+        repPhase  = .start   // clean phase
+        // Caller (WorkoutViewModel.resumeAfterRest) sets state = .active
     }
 }

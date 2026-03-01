@@ -85,6 +85,13 @@ final class WorkoutViewModel: ObservableObject {
             }
         }
 
+        // BUG 3 FIX: wire rest-completed so state auto-transitions to .active
+        repCounter.onRestCompleted = { [weak self] in
+            Task { @MainActor in
+                self?.resumeAfterRest()
+            }
+        }
+
         repCounter.onWorkoutComplete = { [weak self] in
             Task { @MainActor in
                 self?.handleWorkoutComplete()
@@ -170,7 +177,6 @@ final class WorkoutViewModel: ObservableObject {
     // MARK: - Rep / Set / Complete Handlers
 
     private func handleRepCompleted() {
-        // Haptic feedback
         let impact = UIImpactFeedbackGenerator(style: .medium)
         impact.impactOccurred()
     }
@@ -188,9 +194,12 @@ final class WorkoutViewModel: ObservableObject {
         let notification = UINotificationFeedbackGenerator()
         notification.notificationOccurred(.success)
 
-        if repCounter.currentSet <= targetSets {
+        // BUG 2 FIX: was `<= targetSets` which sent the LAST set to .resting too,
+        // racing with handleWorkoutComplete. Use `<` so only intermediate sets rest.
+        if setNumber < targetSets {
             state = .resting
         }
+        // The final set is handled by handleWorkoutComplete via repCounter.onWorkoutComplete
     }
 
     private func handleWorkoutComplete() {
@@ -230,6 +239,7 @@ final class WorkoutViewModel: ObservableObject {
         workoutStartTime = Date()
         state = .active
         camera.start()
+        ScreenManager.shared.keepAwake()
         let impact = UIImpactFeedbackGenerator(style: .heavy)
         impact.impactOccurred()
     }
@@ -242,8 +252,8 @@ final class WorkoutViewModel: ObservableObject {
     func endWorkout() {
         countdownTimer?.cancel()
         camera.stop()
+        ScreenManager.shared.allowSleep()
         if state == .active || state == .resting {
-            // Save partial session
             saveSession()
         }
         state = .setup
@@ -253,6 +263,7 @@ final class WorkoutViewModel: ObservableObject {
     func resetToSetup() {
         countdownTimer?.cancel()
         camera.stop()
+        ScreenManager.shared.allowSleep()
         state = .setup
         repCounter.reset()
         completedSets.removeAll()

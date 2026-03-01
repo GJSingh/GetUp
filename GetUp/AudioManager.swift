@@ -1,44 +1,55 @@
 // AudioManager.swift
-// Programmatic background music using AVAudioEngine — no external audio files needed.
-// Generates looping rhythmic tones tuned to each exercise category.
+// Programmatic workout music via AVAudioEngine — no external files needed.
+// 9 selectable styles (3 per workout category). Auto-stops on app background.
 
 import AVFoundation
 import SwiftUI
 import Combine
-import Combine
-import SwiftUI
 
-// MARK: - Music Style
+// MARK: - Music Genre
 
-enum WorkoutMusicStyle {
-    case strength   // 130 BPM, punchy kick-snare pattern, motivational
-    case yoga       // 60 BPM, soft ambient drone with gentle chimes
-    case dance      // 128 BPM, four-on-the-floor groove with synth hits
+enum MusicGenre: String, CaseIterable, Identifiable {
+    // Strength
+    case powerBeats    = "Power Beats"
+    case hipHop        = "Hip-Hop"
+    case rockDrive     = "Rock Drive"
+    // Yoga
+    case calmFlow      = "Calm Flow"
+    case tibetanBowls  = "Tibetan Bowls"
+    case natureDrone   = "Nature Drone"
+    // Dance
+    case danceGroove   = "Dance Groove"
+    case latinBeat     = "Latin Beat"
+    case edmPulse      = "EDM Pulse"
 
-    var bpm: Double {
+    var id: String { rawValue }
+
+    var workoutCategory: WorkoutMusicCategory {
         switch self {
-        case .strength: return 130
-        case .yoga:     return 60
-        case .dance:    return 128
-        }
-    }
-
-    var displayName: String {
-        switch self {
-        case .strength: return "Power Beats"
-        case .yoga:     return "Calm Flow"
-        case .dance:    return "Dance Groove"
+        case .powerBeats, .hipHop, .rockDrive:       return .strength
+        case .calmFlow, .tibetanBowls, .natureDrone: return .yoga
+        case .danceGroove, .latinBeat, .edmPulse:    return .dance
         }
     }
 
     var emoji: String {
         switch self {
-        case .strength: return "🥁"
-        case .yoga:     return "🎵"
-        case .dance:    return "🎧"
+        case .powerBeats: return "🥁"; case .hipHop: return "🎤"; case .rockDrive: return "🎸"
+        case .calmFlow: return "🎵"; case .tibetanBowls: return "🔔"; case .natureDrone: return "🌿"
+        case .danceGroove: return "🎧"; case .latinBeat: return "💃"; case .edmPulse: return "⚡"
+        }
+    }
+
+    var bpm: Double {
+        switch self {
+        case .powerBeats: return 130; case .hipHop: return 90; case .rockDrive: return 120
+        case .calmFlow: return 60; case .tibetanBowls: return 50; case .natureDrone: return 55
+        case .danceGroove: return 128; case .latinBeat: return 120; case .edmPulse: return 138
         }
     }
 }
+
+enum WorkoutMusicCategory { case strength, yoga, dance }
 
 // MARK: - AudioManager
 
@@ -47,41 +58,56 @@ final class AudioManager: ObservableObject {
 
     static let shared = AudioManager()
 
-    @Published var isPlaying: Bool = false
-    @Published var volume: Float = 0.7
-    @Published var currentStyle: WorkoutMusicStyle = .strength
+    @Published var isPlaying: Bool         = false
+    @Published var volume: Float           = 0.70
+    @Published var currentGenre: MusicGenre = .powerBeats
 
-    // Engine graph
-    private let engine    = AVAudioEngine()
-    private let mixer     = AVAudioMixerNode()
-    private var players:  [AVAudioPlayerNode] = []
-    private var buffers:  [AVAudioPCMBuffer] = []
-
-    // Per-style source nodes
-    private var kickNode:  AVAudioPlayerNode?
-    private var snareNode: AVAudioPlayerNode?
-    private var bassNode:  AVAudioPlayerNode?
-    private var hihatNode: AVAudioPlayerNode?
-    private var padNode:   AVAudioPlayerNode?
-
+    // var not let — we create a fresh engine + mixer on every play() to avoid
+    // AVAudioEngine crashes caused by re-attaching/re-using detached nodes.
+    private var engine   = AVAudioEngine()
+    private var mixer    = AVAudioMixerNode()
+    private var players: [AVAudioPlayerNode] = []
+    private var buffers: [AVAudioPCMBuffer]  = []
     private let sampleRate: Double = 44100
-    private var isEngineBuilt = false
+    private var cancelBag = Set<AnyCancellable>()
 
-    private init() {}
+    private init() {
+        // AUTO-STOP: stop music whenever the app goes to background or loses focus
+        NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.stop() }
+            .store(in: &cancelBag)
+
+        NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.stop() }
+            .store(in: &cancelBag)
+    }
 
     // MARK: - Public API
 
-    func play(style: WorkoutMusicStyle) {
-        currentStyle = style
-        stopInternal()
-        buildEngine(for: style)
-        startEngine()
-        isPlaying = true
+    func play(genre: MusicGenre) {
+        teardown()
+        currentGenre = genre
+        build(genre: genre)
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, options: [.mixWithOthers])
+            try AVAudioSession.sharedInstance().setActive(true)
+            try engine.start()
+            scheduleLoops()
+            isPlaying = true
+        } catch {
+            print("AudioManager: start failed – \(error)")
+        }
     }
 
     func stop() {
-        stopInternal()
+        teardown()
         isPlaying = false
+    }
+
+    func toggle(genre: MusicGenre) {
+        if isPlaying && currentGenre == genre { stop() } else { play(genre: genre) }
     }
 
     func setVolume(_ v: Float) {
@@ -89,323 +115,434 @@ final class AudioManager: ObservableObject {
         mixer.outputVolume = v
     }
 
-    func toggle(style: WorkoutMusicStyle) {
-        if isPlaying && currentStyle == style {
-            stop()
-        } else {
-            play(style: style)
-        }
+    static func defaultGenre(for category: WorkoutMusicCategory) -> MusicGenre {
+        switch category { case .strength: return .powerBeats; case .yoga: return .calmFlow; case .dance: return .danceGroove }
     }
 
-    // MARK: - Engine Lifecycle
+    static func genres(for category: WorkoutMusicCategory) -> [MusicGenre] {
+        MusicGenre.allCases.filter { $0.workoutCategory == category }
+    }
 
-    private func stopInternal() {
-        for p in players { p.stop() }
+    // MARK: - Engine lifecycle
+
+    private func teardown() {
+        // 1. Stop all player nodes
+        players.forEach { $0.stop() }
+        // 2. MUST explicitly detach each node from the engine before releasing it.
+        //    Replacing `engine` without detaching leaves nodes dangling inside the
+        //    old engine's graph — that's what causes the crash on genre switch.
+        players.forEach { engine.detach($0) }
         players.removeAll()
         buffers.removeAll()
+        // 3. Stop engine, then replace both engine and mixer with fresh instances
         if engine.isRunning { engine.stop() }
-        // Detach all non-main nodes
-        for node in [kickNode, snareNode, bassNode, hihatNode, padNode].compactMap({ $0 }) {
-            if engine.attachedNodes.contains(node) {
-                engine.detach(node)
-            }
-        }
-        kickNode = nil; snareNode = nil; bassNode = nil; hihatNode = nil; padNode = nil
-        isEngineBuilt = false
+        engine = AVAudioEngine()
+        mixer  = AVAudioMixerNode()
     }
 
-    private func buildEngine(for style: WorkoutMusicStyle) {
-        guard !isEngineBuilt else { return }
-        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
-
+    private func build(genre: MusicGenre) {
+        let fmt = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
+        // Fresh engine: attach mixer first, connect to main output
         engine.attach(mixer)
-        engine.connect(mixer, to: engine.mainMixerNode, format: format)
+        engine.connect(mixer, to: engine.mainMixerNode, format: fmt)
         mixer.outputVolume = volume
-
-        switch style {
-        case .strength: buildStrengthPattern(format: format)
-        case .yoga:     buildYogaPattern(format: format)
-        case .dance:    buildDancePattern(format: format)
-        }
-
-        isEngineBuilt = true
-    }
-
-    private func startEngine() {
-        do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, options: [.mixWithOthers])
-            try AVAudioSession.sharedInstance().setActive(true)
-            try engine.start()
-            scheduleAllLoops()
-        } catch {
-            print("AudioManager: engine start failed – \(error)")
-            isPlaying = false
+        switch genre {
+        case .powerBeats:   buildPowerBeats(fmt)
+        case .hipHop:       buildHipHop(fmt)
+        case .rockDrive:    buildRockDrive(fmt)
+        case .calmFlow:     buildCalmFlow(fmt)
+        case .tibetanBowls: buildTibetanBowls(fmt)
+        case .natureDrone:  buildNatureDrone(fmt)
+        case .danceGroove:  buildDanceGroove(fmt)
+        case .latinBeat:    buildLatinBeat(fmt)
+        case .edmPulse:     buildEDMPulse(fmt)
         }
     }
 
-    // MARK: - Pattern Builders
-
-    /// Strength: punchy 130 BPM kick on 1&3, snare on 2&4, tight hihat 8ths
-    private func buildStrengthPattern(format: AVAudioFormat) {
-        let secPerBeat = 60.0 / 130.0
-        let barLen = Int(secPerBeat * 4 * sampleRate)
-
-        // Kick: deep thud on beats 1 and 3
-        let kickBuf = makeBuffer(frames: AVAudioFrameCount(barLen), format: format) { i, sr in
-            // Two kick hits per bar
-            let beat1 = 0
-            let beat3 = Int(secPerBeat * 2 * sr)
-            let hit   = closestHit(i: i, hits: [beat1, beat3], sr: sr)
-            return kick(t: hit) * 1.0
+    private func scheduleLoops() {
+        for (p, b) in zip(players, buffers) {
+            p.scheduleBuffer(b, at: nil, options: .loops); p.play()
         }
-
-        // Snare: crispy snap on beats 2 and 4
-        let snareBuf = makeBuffer(frames: AVAudioFrameCount(barLen), format: format) { i, sr in
-            let beat2 = Int(secPerBeat * 1 * sr)
-            let beat4 = Int(secPerBeat * 3 * sr)
-            let hit   = closestHit(i: i, hits: [beat2, beat4], sr: sr)
-            return snare(t: hit) * 0.6
-        }
-
-        // Hihat: closed 8ths
-        let hiBuf = makeBuffer(frames: AVAudioFrameCount(barLen), format: format) { i, sr in
-            let step = Int(secPerBeat * 0.5 * sr)
-            let hit  = i % step
-            return hihat(t: Double(hit) / sr) * 0.25
-        }
-
-        // Low bass pulse on beats 1&3
-        let bassBuf = makeBuffer(frames: AVAudioFrameCount(barLen), format: format) { i, sr in
-            let beat1 = 0
-            let beat3 = Int(secPerBeat * 2 * sr)
-            let hit   = closestHit(i: i, hits: [beat1, beat3], sr: sr)
-            return bassNote(t: hit, freq: 55.0) * 0.5
-        }
-
-        attachAndKeep([kickBuf, snareBuf, hiBuf, bassBuf], format: format)
     }
 
-    /// Yoga: slow 60 BPM ambient — soft drone + gentle bell chimes
-    private func buildYogaPattern(format: AVAudioFormat) {
-        let secPerBeat = 60.0 / 60.0
-        let barLen = Int(secPerBeat * 4 * sampleRate)
+    // MARK: - Buffer utilities
 
-        // Ambient pad: slow chord (A3-C#4-E4 = A major)
-        let padBuf = makeBuffer(frames: AVAudioFrameCount(barLen), format: format) { i, sr in
-            let t = Double(i) / sr
-            let env = 0.6 * (1.0 - exp(-t * 0.5)) * exp(-t * 0.15)
-            let a3  = sin(2 * .pi * 220.0 * t) * env
-            let cs4 = sin(2 * .pi * 277.18 * t) * env * 0.7
-            let e4  = sin(2 * .pi * 329.63 * t) * env * 0.5
-            return Float((a3 + cs4 + e4) * 0.35)
+    private func barFrames(_ bpm: Double, beats: Int = 4) -> AVAudioFrameCount {
+        AVAudioFrameCount((60.0 / bpm) * Double(beats) * sampleRate)
+    }
+
+    private func buf(_ n: AVAudioFrameCount, _ fmt: AVAudioFormat, _ fn: (Int, Double) -> Float) -> AVAudioPCMBuffer {
+        let b = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: n)!
+        b.frameLength = n
+        let L = b.floatChannelData![0]; let R = b.floatChannelData![1]
+        for i in 0..<Int(n) { let s = max(-1, min(1, fn(i, sampleRate))); L[i] = s; R[i] = s }
+        return b
+    }
+
+    private func attach(_ bufs: [AVAudioPCMBuffer], _ fmt: AVAudioFormat) {
+        for b in bufs {
+            let n = AVAudioPlayerNode()
+            engine.attach(n); engine.connect(n, to: mixer, format: fmt)
+            players.append(n); buffers.append(b)
         }
+    }
 
-        // Bell chime on beat 1 only
-        let bellBuf = makeBuffer(frames: AVAudioFrameCount(barLen), format: format) { i, sr in
-            let t = Double(i) / sr
-            let env = exp(-t * 3.0)
-            return Float(sin(2 * .pi * 659.25 * t) * env * 0.3)
-        }
+    // Returns time since nearest hit (or -1 if no hit has passed)
+    private func nh(_ i: Int, _ hits: [Int], _ sr: Double) -> Double {
+        var best = Int.max
+        for h in hits { let d = i - h; if d >= 0 && d < best { best = d } }
+        return best == Int.max ? -1 : Double(best) / sr
+    }
 
-        // Soft white-noise breath every 2 beats
-        let breathBuf = makeBuffer(frames: AVAudioFrameCount(barLen), format: format) { i, sr in
-            let t = Double(i) / sr
-            let cycle = fmod(t, secPerBeat * 2)
-            let env = sin(.pi * cycle / (secPerBeat * 2)) * 0.1
+    // MARK: - Strength
+
+    private func buildPowerBeats(_ fmt: AVAudioFormat) {
+        let spb = 60.0 / 130.0
+        let n   = barFrames(130)
+        attach([buf(n, fmt) { i, sr in
+            let t = self.nh(i, [0, Int(spb*2*sr)], sr); guard t >= 0 else { return 0 }
+            return self.kick(t) * 0.95
+        }], fmt)
+        attach([buf(n, fmt) { i, sr in
+            let t = self.nh(i, [Int(spb*sr), Int(spb*3*sr)], sr); guard t >= 0 else { return 0 }
+            return self.snare(t) * 0.65
+        }], fmt)
+        attach([buf(n, fmt) { i, sr in
+            let step = Int(spb * 0.25 * sr)
+            return self.closedHH(Double(i % step) / sr) * 0.18
+        }], fmt)
+        attach([buf(n, fmt) { i, sr in
+            let t = self.nh(i, [0, Int(spb*2*sr)], sr); guard t >= 0 else { return 0 }
+            return self.bassNote(t, 55) * 0.55
+        }], fmt)
+    }
+
+    private func buildHipHop(_ fmt: AVAudioFormat) {
+        let spb = 60.0 / 90.0
+        let n   = barFrames(90)
+        attach([buf(n, fmt) { i, sr in
+            let t = self.nh(i, [0, Int(spb*0.75*sr), Int(spb*2*sr)], sr); guard t >= 0 else { return 0 }
+            return self.kick808(t) * 1.0
+        }], fmt)
+        attach([buf(n, fmt) { i, sr in
+            let t = self.nh(i, [Int(spb*sr), Int(spb*3*sr)], sr); guard t >= 0 else { return 0 }
+            return self.clap(t) * 0.6
+        }], fmt)
+        attach([buf(n, fmt) { i, sr in  // trap rolling hats
+            let pos      = Double(i) / sr
+            let gridPos  = fmod(pos, spb) / spb
+            let vel: Double = (gridPos < 0.0625 || (gridPos > 0.5 && gridPos < 0.5625)) ? 0.4 : 0.1
+            return self.closedHH(fmod(pos, spb * 0.0625)) * Float(vel)
+        }], fmt)
+        attach([buf(n, fmt) { i, sr in  // 808 sub slide
+            let t    = Double(i) / sr
+            let beat = fmod(t, spb) / spb
+            let freq = beat < 0.5 ? 55.0 : 49.0
+            return Float(sin(2 * Double.pi * freq * t) * exp(-fmod(t, spb) * 3) * 0.7)
+        }], fmt)
+    }
+
+    private func buildRockDrive(_ fmt: AVAudioFormat) {
+        let spb = 60.0 / 120.0
+        let n   = barFrames(120)
+        attach([buf(n, fmt) { i, sr in  // double kick
+            let hits = [0, Int(spb*0.5*sr), Int(spb*2*sr), Int(spb*2.5*sr)]
+            let t = self.nh(i, hits, sr); guard t >= 0 else { return 0 }
+            return self.kick(t) * 0.9
+        }], fmt)
+        attach([buf(n, fmt) { i, sr in
+            let t = self.nh(i, [Int(spb*sr), Int(spb*3*sr)], sr); guard t >= 0 else { return 0 }
+            return self.rimshot(t) * 0.55
+        }], fmt)
+        attach([buf(n, fmt) { i, sr in
+            let hits = [Int(spb*0.5*sr), Int(spb*1.5*sr), Int(spb*2.5*sr), Int(spb*3.5*sr)]
+            let t = self.nh(i, hits, sr); guard t >= 0 else { return 0 }
+            return self.openHH(t) * 0.28
+        }], fmt)
+        attach([buf(n, fmt) { i, sr in  // power chord
+            let t = self.nh(i, [0, Int(spb*2*sr)], sr); guard t >= 0 else { return 0 }
+            let env   = exp(-t * 6.0)
+            let chord = tanh((sin(2*Double.pi*82.41*t) + sin(2*Double.pi*123.47*t)) * 3)
+            return Float(chord * env * 0.4)
+        }], fmt)
+    }
+
+    // MARK: - Yoga
+
+    private func buildCalmFlow(_ fmt: AVAudioFormat) {
+        let n = barFrames(60, beats: 8)
+        attach([buf(n, fmt) { i, sr in  // A-major pad
+            let t   = Double(i) / sr
+            let env = 0.55 * (1 - exp(-t * 0.4)) * exp(-t * 0.08)
+            let a3  = sin(2*Double.pi*220.0*t)
+            let cs4 = sin(2*Double.pi*277.18*t) * 0.7
+            let e4  = sin(2*Double.pi*329.63*t) * 0.5
+            return Float((a3 + cs4 + e4) * env * 0.28)
+        }], fmt)
+        attach([buf(n, fmt) { i, sr in  // bell on bar start
+            let t = self.nh(i, [0], sr); guard t >= 0 else { return 0 }
+            return Float(sin(2*Double.pi*659.25*t) * exp(-t*3) * 0.35)
+        }], fmt)
+        attach([buf(n, fmt) { i, sr in  // breath noise
+            let t   = Double(i) / sr
+            let env = sin(Double.pi * fmod(t, 4.0) / 4.0) * 0.06
             return Float.random(in: -1...1) * Float(env)
-        }
-
-        attachAndKeep([padBuf, bellBuf, breathBuf], format: format)
+        }], fmt)
     }
 
-    /// Dance: 128 BPM four-on-the-floor, synth bass, open hats on off-beats
-    private func buildDancePattern(format: AVAudioFormat) {
-        let secPerBeat = 60.0 / 128.0
-        let barLen = Int(secPerBeat * 4 * sampleRate)
+    private func buildTibetanBowls(_ fmt: AVAudioFormat) {
+        let n = barFrames(50, beats: 16)
+        attach([buf(n, fmt) { i, sr in  // low bowl C2 147Hz
+            let t      = Double(i) / sr
+            let period = 60.0 / 50.0 * 4
+            let phase  = fmod(t, period)
+            return Float(sin(2*Double.pi*147*t) * exp(-phase*0.6) * 0.45)
+        }], fmt)
+        attach([buf(n, fmt) { i, sr in  // mid bowl G3 offset
+            let t      = Double(i) / sr
+            let period = 60.0 / 50.0 * 6
+            let off    = 60.0 / 50.0 * 2
+            let phase  = fmod(t + off, period)
+            return Float(sin(2*Double.pi*196*t) * exp(-phase*0.5) * 0.35)
+        }], fmt)
+        attach([buf(n, fmt) { i, sr in  // shimmer overtone
+            let t = Double(i) / sr
+            return Float(sin(2*Double.pi*392*t) * exp(-t*0.12) * 0.15)
+        }], fmt)
+        attach([buf(n, fmt) { i, sr in  // sub drone
+            let t = Double(i) / sr
+            return Float(sin(2*Double.pi*73.4*t) * 0.10)
+        }], fmt)
+    }
 
-        // Kick every beat (4 on the floor)
-        let kickBuf = makeBuffer(frames: AVAudioFrameCount(barLen), format: format) { i, sr in
-            let step = Int(secPerBeat * sr)
-            let hit  = i % step
-            return kick(t: Double(hit) / sr) * 0.95
-        }
-
-        // Open hihat on off-beats (between every beat)
-        let openHiBuf = makeBuffer(frames: AVAudioFrameCount(barLen), format: format) { i, sr in
-            let step    = Int(secPerBeat * sr)
-            let offbeat = step / 2
-            let pos     = i % step
-            let hit     = abs(pos - offbeat)
-            let t       = Double(hit) / sr
-            return openHihat(t: t) * 0.35
-        }
-
-        // Synth bass line: root on 1, fifth on 3
-        let synBuf = makeBuffer(frames: AVAudioFrameCount(barLen), format: format) { i, sr in
-            let beat1 = 0
-            let beat3 = Int(secPerBeat * 2 * sr)
-            let freqs: [(Int, Double)] = [(beat1, 73.42), (beat3, 110.0)]
-            var sig = 0.0
-            for (start, freq) in freqs {
-                if i >= start {
-                    let t   = Double(i - start) / sr
-                    let env = exp(-t * 4.0)
-                    let saw = (2.0 * fmod(t * freq, 1.0)) - 1.0  // sawtooth
-                    sig += saw * env * 0.4
-                }
+    private func buildNatureDrone(_ fmt: AVAudioFormat) {
+        let n = barFrames(55, beats: 16)
+        var pink: Float = 0
+        attach([buf(n, fmt) { i, sr in  // filtered wind noise
+            let w = Float.random(in: -1...1)
+            pink = pink * 0.99 + w * 0.01
+            return pink * 0.3
+        }], fmt)
+        attach([buf(n, fmt) { i, sr in  // pentatonic melody
+            let t     = Double(i) / sr
+            let spb   = 60.0 / 55.0
+            let notes: [(Double, Double)] = [(0, 261.63), (4, 293.66), (8, 329.63), (12, 392.0)]
+            var out   = 0.0
+            for (beat, freq) in notes {
+                let onset = beat * spb
+                guard t >= onset else { continue }
+                out += sin(2*Double.pi*freq*t) * exp(-(t - onset)*0.8) * 0.18
             }
-            return Float(sig)
-        }
-
-        // Clap on beats 2 & 4
-        let clapBuf = makeBuffer(frames: AVAudioFrameCount(barLen), format: format) { i, sr in
-            let beat2 = Int(secPerBeat * 1 * sr)
-            let beat4 = Int(secPerBeat * 3 * sr)
-            let hit   = closestHit(i: i, hits: [beat2, beat4], sr: sr)
-            return snare(t: hit) * 0.45
-        }
-
-        attachAndKeep([kickBuf, openHiBuf, synBuf, clapBuf], format: format)
+            return Float(out)
+        }], fmt)
     }
 
-    // MARK: - Buffer Helpers
+    // MARK: - Dance
 
-    private func makeBuffer(frames: AVAudioFrameCount,
-                            format: AVAudioFormat,
-                            signal: (Int, Double) -> Float) -> AVAudioPCMBuffer {
-        let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames)!
-        buf.frameLength = frames
-        let L = buf.floatChannelData![0]
-        let R = buf.floatChannelData![1]
-        for i in 0..<Int(frames) {
-            let s = signal(i, sampleRate)
-            L[i] = s
-            R[i] = s
-        }
-        return buf
+    private func buildDanceGroove(_ fmt: AVAudioFormat) {
+        let spb = 60.0 / 128.0
+        let n   = barFrames(128)
+        // Kick every beat
+        attach([buf(n, fmt) { i, sr in
+            let step = Int(spb * sr)
+            return self.kick(Double(i % step) / sr) * 0.95
+        }], fmt)
+        // Open hat offbeats
+        attach([buf(n, fmt) { i, sr in
+            let hits = [Int(spb*0.5*sr), Int(spb*1.5*sr), Int(spb*2.5*sr), Int(spb*3.5*sr)]
+            let t = self.nh(i, hits, sr); guard t >= 0 else { return 0 }
+            return self.openHH(t) * 0.35
+        }], fmt)
+        // Clap on 2 & 4
+        attach([buf(n, fmt) { i, sr in
+            let t = self.nh(i, [Int(spb*sr), Int(spb*3*sr)], sr); guard t >= 0 else { return 0 }
+            return self.clap(t) * 0.5
+        }], fmt)
+        // Synth bass on 1 & 3
+        attach([buf(n, fmt) { i, sr in
+            let t = self.nh(i, [0, Int(spb*2*sr)], sr); guard t >= 0 else { return 0 }
+            let saw = (2.0 * fmod(t * 73.42, 1.0)) - 1.0
+            return Float(saw * exp(-t * 4) * 0.45)
+        }], fmt)
     }
 
-    private func attachAndKeep(_ bufs: [AVAudioPCMBuffer], format: AVAudioFormat) {
-        for buf in bufs {
-            let node = AVAudioPlayerNode()
-            engine.attach(node)
-            engine.connect(node, to: mixer, format: format)
-            players.append(node)
-            buffers.append(buf)
-        }
+    private func buildLatinBeat(_ fmt: AVAudioFormat) {
+        let spb = 60.0 / 120.0
+        let n   = barFrames(120, beats: 2)
+        // Son clave woodblock
+        attach([buf(n, fmt) { i, sr in
+            let hits = [0, Int(spb*1.5*sr), Int(spb*3*sr), Int(spb*4.5*sr), Int(spb*6.5*sr)]
+            let t = self.nh(i, hits, sr); guard t >= 0 else { return 0 }
+            return Float(sin(2 * Double.pi * 900 * t) * exp(-t * 60) * 0.55)
+        }], fmt)
+        // Conga slap
+        attach([buf(n, fmt) { i, sr in
+            let hits = [Int(spb*0.5*sr), Int(spb*2*sr), Int(spb*3.5*sr), Int(spb*5.5*sr)]
+            let t = self.nh(i, hits, sr); guard t >= 0 else { return 0 }
+            return self.conga(t) * 0.5
+        }], fmt)
+        // Bass on 1 & 3
+        attach([buf(n, fmt) { i, sr in
+            let t = self.nh(i, [0, Int(spb*4*sr)], sr); guard t >= 0 else { return 0 }
+            return self.bassNote(t, 65.41) * 0.6
+        }], fmt)
+        // Cowbell accent
+        attach([buf(n, fmt) { i, sr in
+            let t = self.nh(i, [Int(spb*2.5*sr), Int(spb*6.5*sr)], sr); guard t >= 0 else { return 0 }
+            let tone = sin(2*Double.pi*562*t) + sin(2*Double.pi*845*t) * 0.6
+            return Float(tone * exp(-t * 12) * 0.3)
+        }], fmt)
     }
 
-    private func scheduleAllLoops() {
-        for (node, buf) in zip(players, buffers) {
-            node.scheduleBuffer(buf, at: nil, options: .loops)
-            node.play()
-        }
+    private func buildEDMPulse(_ fmt: AVAudioFormat) {
+        let spb = 60.0 / 138.0
+        let n   = barFrames(138, beats: 8)
+        // Hard kick every beat
+        attach([buf(n, fmt) { i, sr in
+            let step = Int(spb * sr)
+            return self.hardKick(Double(i % step) / sr) * 1.0
+        }], fmt)
+        // 16th closed hats
+        attach([buf(n, fmt) { i, sr in
+            let step = Int(spb * 0.25 * sr)
+            return self.closedHH(Double(i % step) / sr) * 0.15
+        }], fmt)
+        // Synth lead stab
+        attach([buf(n, fmt) { i, sr in
+            let hits = [0, Int(spb*2*sr), Int(spb*4*sr), Int(spb*6*sr)]
+            let t = self.nh(i, hits, sr); guard t >= 0 else { return 0 }
+            let env = exp(-t * 5.0)
+            let sq1 = sin(2 * Double.pi * 220.0 * t) > 0 ? 1.0 : -1.0
+            let sq2 = sin(2 * Double.pi * 221.5 * t) > 0 ? 1.0 : -1.0
+            return Float((sq1 + sq2) * 0.5 * env * 0.3)
+        }], fmt)
+        // Crash on bar start
+        attach([buf(n, fmt) { i, sr in
+            let t = self.nh(i, [0], sr); guard t >= 0 else { return 0 }
+            let noise = Double.random(in: -1...1)
+            return Float((noise + sin(2*Double.pi*800*t)*0.3) * exp(-t*4) * 0.4)
+        }], fmt)
+        // Sidechained bass
+        attach([buf(n, fmt) { i, sr in
+            let t = Double(i) / sr
+            let sc  = 1.0 - exp(-fmod(t, spb) * 15)
+            let saw = (2.0 * fmod(t * 55.0, 1.0)) - 1.0
+            return Float(saw * sc * 0.5)
+        }], fmt)
     }
 
     // MARK: - Synthesis Primitives
 
-    private func kick(t: Double) -> Float {
+    private func kick(_ t: Double) -> Float {
         guard t >= 0 else { return 0 }
-        let freq = 60.0 * exp(-t * 30.0) + 40.0
-        let env  = exp(-t * 18.0)
-        return Float(sin(2 * .pi * freq * t) * env)
+        return Float(sin(2*Double.pi*(80*exp(-t*25)+40)*t)*exp(-t*15))
     }
-
-    private func snare(t: Double) -> Float {
+    private func hardKick(_ t: Double) -> Float {
         guard t >= 0 else { return 0 }
-        let env   = exp(-t * 20.0)
-        let tone  = sin(2 * .pi * 200.0 * t) * 0.3
-        let noise = Double.random(in: -1...1) * 0.7
-        return Float((tone + noise) * env)
+        let freq=100*exp(-t*40)+40; let click=Double.random(in: -1...1)*exp(-t*200)*0.3
+        return Float(sin(2*Double.pi*freq*t)*exp(-t*12)+click)
     }
-
-    private func hihat(t: Double) -> Float {
-        let env = exp(-t * 80.0)
-        return Float(Double.random(in: -1...1) * env)
-    }
-
-    private func openHihat(t: Double) -> Float {
-        let env = exp(-t * 20.0)
-        return Float(Double.random(in: -1...1) * env)
-    }
-
-    private func bassNote(t: Double, freq: Double) -> Float {
+    private func kick808(_ t: Double) -> Float {
         guard t >= 0 else { return 0 }
-        let env = exp(-t * 8.0)
-        return Float(sin(2 * .pi * freq * t) * env)
+        return Float(sin(2*Double.pi*(60*exp(-t*8)+40)*t)*exp(-t*4))
     }
-
-    // Returns time-since-nearest-hit for a given sample position
-    private func closestHit(i: Int, hits: [Int], sr: Double) -> Double {
-        var best = Int.max
-        for h in hits {
-            let d = i - h
-            if d >= 0 && d < best { best = d }
-        }
-        return best == Int.max ? -1.0 : Double(best) / sr
+    private func snare(_ t: Double) -> Float {
+        guard t >= 0 else { return 0 }
+        return Float((sin(2*Double.pi*200*t)*0.25+Double.random(in: -1...1)*0.75)*exp(-t*18))
+    }
+    private func rimshot(_ t: Double) -> Float {
+        guard t >= 0 else { return 0 }
+        return Float((sin(2*Double.pi*800*t)*0.4+sin(2*Double.pi*1200*t)*0.3+Double.random(in:-1...1)*0.3)*exp(-t*50))
+    }
+    private func clap(_ t: Double) -> Float {
+        guard t >= 0 else { return 0 }
+        let b1=Double.random(in:-1...1)*exp(-t*80)
+        let b2=Double.random(in:-1...1)*exp(-(t-0.008)*60)*(t>0.008 ? 1:0)
+        return Float((b1+b2+Double.random(in:-1...1)*exp(-t*20)*0.4)*0.9)
+    }
+    private func conga(_ t: Double) -> Float {
+        guard t >= 0 else { return 0 }
+        return Float(sin(2*Double.pi*(220+80*exp(-t*30))*t)*exp(-t*25)*0.8)
+    }
+    private func closedHH(_ t: Double) -> Float { Float(Double.random(in:-1...1)*exp(-t*90)) }
+    private func openHH(_ t: Double)   -> Float { Float(Double.random(in:-1...1)*exp(-t*22)) }
+    private func bassNote(_ t: Double, _ f: Double) -> Float {
+        guard t >= 0 else { return 0 }
+        return Float(sin(2*Double.pi*f*t)*exp(-t*7))
     }
 }
 
-// MARK: - Music Control Button (drop-in UI component)
+// MARK: - Music Genre Picker UI
 
-struct MusicControlButton: View {
-    let style: WorkoutMusicStyle
+struct MusicGenrePicker: View {
+    let category: WorkoutMusicCategory
     @ObservedObject private var audio = AudioManager.shared
-
-    private var isActive: Bool { audio.isPlaying && audio.currentStyle == style }
-
-    private var accentColor: Color {
-        switch style {
-        case .strength: return Color(hex: "00C896")
-        case .yoga:     return Color(hex: "B57BFF")
-        case .dance:    return Color(hex: "FF6B35")
-        }
-    }
+    var accentColor: Color
 
     var body: some View {
-        Button(action: { AudioManager.shared.toggle(style: style) }) {
-            HStack(spacing: 8) {
-                Image(systemName: isActive ? "pause.circle.fill" : "music.note")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(isActive ? accentColor : Color(hex: "888899"))
-                Text(isActive ? "Pause Music" : "\(style.emoji) \(style.displayName)")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(isActive ? .white : Color(hex: "888899"))
+        VStack(spacing: 10) {
+            HStack {
+                Text("MUSIC STYLE").font(.system(size: 11, weight: .bold))
+                    .foregroundColor(Color(hex: "444460")).kerning(2)
+                Spacer()
+                if audio.isPlaying {
+                    HStack(spacing: 4) {
+                        ForEach(0..<3, id: \.self) { i in
+                            EQBar(delay: Double(i)*0.15, color: accentColor)
+                        }
+                    }.frame(height: 14)
+                }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(
-                isActive
-                    ? accentColor.opacity(0.15)
-                    : Color(hex: "14141E")
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 20)
-                    .stroke(isActive ? accentColor.opacity(0.5) : Color(hex: "252535"), lineWidth: 1)
-            )
-            .cornerRadius(20)
+            HStack(spacing: 6) {
+                ForEach(AudioManager.genres(for: category)) { genre in
+                    let active = audio.isPlaying && audio.currentGenre == genre
+                    Button(action: { AudioManager.shared.toggle(genre: genre) }) {
+                        VStack(spacing: 3) {
+                            Text(genre.emoji).font(.system(size: 22))
+                            Text(genre.rawValue)
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(active ? .white : Color(hex: "666680"))
+                                .multilineTextAlignment(.center).lineLimit(2)
+                                .frame(maxWidth: .infinity)
+                        }
+                        .padding(.vertical, 9).padding(.horizontal, 4)
+                        .background(active ? accentColor.opacity(0.18) : Color(hex: "0E0E18"))
+                        .overlay(RoundedRectangle(cornerRadius: 10)
+                            .stroke(active ? accentColor.opacity(0.5) : Color(hex: "252535"), lineWidth: 1))
+                        .cornerRadius(10)
+                    }
+                }
+            }
+            if audio.isPlaying { MusicVolumeSlider() }
         }
+        .padding(14)
+        .background(Color(hex: "14141E"))
+        .overlay(RoundedRectangle(cornerRadius: 14)
+            .stroke(audio.isPlaying ? accentColor.opacity(0.3) : Color(hex: "1E1E2E"), lineWidth: 1))
+        .cornerRadius(14)
     }
 }
 
-// MARK: - Volume Slider
+private struct EQBar: View {
+    let delay: Double; let color: Color
+    @State private var h: CGFloat = 0.2
+    var body: some View {
+        RoundedRectangle(cornerRadius: 1.5).fill(color).frame(width: 3, height: 14*h)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.45).repeatForever().delay(delay)) { h = 1.0 }
+            }
+    }
+}
 
 struct MusicVolumeSlider: View {
     @ObservedObject private var audio = AudioManager.shared
-
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "speaker.fill")
-                .font(.system(size: 11))
-                .foregroundColor(Color(hex: "555570"))
-            Slider(value: Binding(
-                get: { Double(audio.volume) },
-                set: { AudioManager.shared.setVolume(Float($0)) }
-            ), in: 0...1)
-            .tint(Color(hex: "5BC8FF"))
-            Image(systemName: "speaker.wave.3.fill")
-                .font(.system(size: 11))
-                .foregroundColor(Color(hex: "555570"))
+        HStack(spacing: 8) {
+            Image(systemName: "speaker.fill").font(.system(size: 10)).foregroundColor(Color(hex: "555570"))
+            Slider(value: Binding(get: { Double(audio.volume) },
+                                  set: { AudioManager.shared.setVolume(Float($0)) }), in: 0...1)
+                .tint(Color(hex: "5BC8FF"))
+            Image(systemName: "speaker.wave.3.fill").font(.system(size: 10)).foregroundColor(Color(hex: "555570"))
         }
     }
 }
