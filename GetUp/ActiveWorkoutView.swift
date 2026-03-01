@@ -5,6 +5,7 @@
 import SwiftUI
 import Vision
 import AVFoundation
+import Combine
 
 struct ActiveWorkoutView: View {
     @EnvironmentObject var vm: WorkoutViewModel
@@ -12,6 +13,10 @@ struct ActiveWorkoutView: View {
 
     @State private var showEndConfirmation = false
     @State private var committedZoom: CGFloat = 1.0
+
+    // Orientation: tracked separately so layout only switches AFTER rotation settles.
+    // GeometryReader alone switches layout mid-animation causing the stutter/hang.
+    @State private var isLandscape = false
 
     // Form glow: builds up over consecutive excellent/good frames
     @State private var excellentStreak  = 0
@@ -26,7 +31,7 @@ struct ActiveWorkoutView: View {
             Color(hex: "0A0A0F").ignoresSafeArea()
 
             GeometryReader { geo in
-                if geo.size.width > geo.size.height {
+                if isLandscape {
                     // ── Landscape: 60/40 side-by-side ──────────────────────
                     HStack(spacing: 0) {
                         cameraPanel(size: CGSize(width: geo.size.width * 0.6,
@@ -34,6 +39,7 @@ struct ActiveWorkoutView: View {
                         feedbackPanel
                             .frame(width: geo.size.width * 0.4)
                     }
+                    .animation(nil, value: isLandscape)   // never animate structural layout
                 } else {
                     // ── Portrait: camera top 65%, stats bottom 35% ─────────
                     VStack(spacing: 0) {
@@ -41,6 +47,7 @@ struct ActiveWorkoutView: View {
                                                 height: geo.size.height * 0.65))
                         feedbackPanel
                     }
+                    .animation(nil, value: isLandscape)
                 }
             }
 
@@ -89,11 +96,27 @@ struct ActiveWorkoutView: View {
         .onChange(of: vm.repCounter.currentReps) { _, _ in
             flashRep()
         }
-        .onAppear   { AppOrientationHelper.unlock() }      // allow landscape on workout screen
+        .onAppear { AppOrientationHelper.unlock() }
         .onDisappear {
-            AppOrientationHelper.lockPortrait()             // snap back when leaving
+            AppOrientationHelper.lockPortrait()
             vm.camera.stop()
             AudioManager.shared.stop()
+        }
+        // UIDevice.orientationDidChangeNotification fires on main thread.
+        // Read interfaceOrientation immediately — it's already settled.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIDevice.orientationDidChangeNotification)
+        ) { _ in
+            guard let scene = UIApplication.shared.connectedScenes
+                .compactMap({ $0 as? UIWindowScene }).first else { return }
+            let landscape = scene.interfaceOrientation.isLandscape
+            guard landscape != isLandscape else { return }
+            // Disable SwiftUI animation on layout switch — iOS handles its own
+            // rotation animation. If both run simultaneously the view hangs/judders.
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) { isLandscape = landscape }
         }
         .alert("End Workout?", isPresented: $showEndConfirmation) {
             Button("End & Save", role: .destructive) {

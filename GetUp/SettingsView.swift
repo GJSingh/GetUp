@@ -15,8 +15,10 @@ struct SettingsView: View {
     private var sessions: [WorkoutSession]
 
     @Environment(\.modelContext) private var modelContext
-    @State private var showDeleteConfirm = false
+    @State private var showDeleteConfirm    = false
     @State private var selectedAnalyticsTab = 0
+    @State private var showShareSheet       = false
+    @State private var sharePeriod: SharePeriod = .lastSession
 
     var body: some View {
         NavigationStack {
@@ -52,6 +54,9 @@ struct SettingsView: View {
             .background(Color(hex: "0A0A0F").ignoresSafeArea())
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.large)
+        }
+        .sheet(isPresented: $showShareSheet) {
+            WorkoutShareSheet(period: sharePeriod, sessions: sessions)
         }
         .alert("Delete All Data?", isPresented: $showDeleteConfirm) {
             Button("Delete Everything", role: .destructive) {
@@ -168,7 +173,7 @@ struct SettingsView: View {
                 .foregroundStyle(Color(hex: "00C896"))
                 .cornerRadius(4)
             }
-            .chartYScale(domain: 0...max(4, last7DaysData.map(\.value).max() ?? 4))
+            .chartYScale(domain: 0...max(5, (last7DaysData.map(\.value).max() ?? 0) + 1))
             .chartXAxis {
                 AxisMarks { mark in
                     AxisValueLabel()
@@ -196,16 +201,18 @@ struct SettingsView: View {
                 .foregroundStyle(Color(hex: "666680"))
 
             Chart(formTrendData) { point in
+                // point.value is already 0–100 (stored as Int(score * 100))
+                // DO NOT multiply by 100 again — that caused the overflow
                 LineMark(
                     x: .value("Session", point.label),
-                    y: .value("Score", point.value * 100)
+                    y: .value("Score", point.value)
                 )
                 .foregroundStyle(Color(hex: "5BC8FF"))
                 .lineStyle(StrokeStyle(lineWidth: 2.5))
 
                 AreaMark(
                     x: .value("Session", point.label),
-                    y: .value("Score", point.value * 100)
+                    y: .value("Score", point.value)
                 )
                 .foregroundStyle(
                     LinearGradient(
@@ -216,17 +223,17 @@ struct SettingsView: View {
 
                 PointMark(
                     x: .value("Session", point.label),
-                    y: .value("Score", point.value * 100)
+                    y: .value("Score", point.value)
                 )
                 .foregroundStyle(Color(hex: "5BC8FF"))
                 .symbolSize(30)
             }
-            .chartYScale(domain: 0...100)
+            .chartYScale(domain: 0...110)   // 110 gives headroom so score=100 never clips top
             .chartXAxis {
                 AxisMarks { AxisValueLabel().foregroundStyle(Color(hex: "555570")).font(.system(size: 10)) }
             }
             .chartYAxis {
-                AxisMarks(values: [0, 50, 100]) { mark in
+                AxisMarks(values: [0, 25, 50, 75, 100]) { mark in
                     AxisGridLine().foregroundStyle(Color(hex: "1E1E35"))
                     AxisValueLabel {
                         if let v = mark.as(Int.self) {
@@ -340,6 +347,27 @@ struct SettingsView: View {
                     Label("Delete All Workout Data", systemImage: "trash")
                         .font(.system(size: 15))
                         .foregroundStyle(.red)
+                }
+            }
+
+            // Share
+            SettingsSection(title: "Share Workout") {
+                ForEach(Array(SharePeriod.allCases.enumerated()), id: \.element.id) { idx, period in
+                    if idx > 0 { Divider().background(Color(hex: "1E1E2E")) }
+                    Button {
+                        sharePeriod = period
+                        showShareSheet = true
+                    } label: {
+                        HStack {
+                            Label(period.title, systemImage: period.icon)
+                                .font(.system(size: 15))
+                                .foregroundStyle(.white)
+                            Spacer()
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.system(size: 13))
+                                .foregroundStyle(Color(hex: "00C896"))
+                        }
+                    }
                 }
             }
 
@@ -537,4 +565,385 @@ private struct PrivacyRow: View {
         }
         .padding(.vertical, 4)
     }
+}
+
+// MARK: - SharePeriod
+
+enum SharePeriod: CaseIterable {
+    case lastSession, today, thisWeek, thisMonth
+
+    var id: String {
+        switch self {
+        case .lastSession: return "lastSession"
+        case .today:       return "today"
+        case .thisWeek:    return "thisWeek"
+        case .thisMonth:   return "thisMonth"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .lastSession: return "Share Last Session"
+        case .today:       return "Share Today"
+        case .thisWeek:    return "Share This Week"
+        case .thisMonth:   return "Share This Month"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .lastSession: return "doc.text"
+        case .today:       return "sun.max"
+        case .thisWeek:    return "calendar.badge.clock"
+        case .thisMonth:   return "calendar"
+        }
+    }
+
+    /// Filter sessions from the full list based on period
+    func filter(_ sessions: [WorkoutSession]) -> [WorkoutSession] {
+        let cal = Calendar.current
+        let now = Date()
+        switch self {
+        case .lastSession:
+            return sessions.prefix(1).map { $0 }
+        case .today:
+            return sessions.filter { cal.isDateInToday($0.date) }
+        case .thisWeek:
+            guard let weekAgo = cal.date(byAdding: .day, value: -7, to: now) else { return [] }
+            return sessions.filter { $0.date >= weekAgo }
+        case .thisMonth:
+            guard let monthAgo = cal.date(byAdding: .month, value: -1, to: now) else { return [] }
+            return sessions.filter { $0.date >= monthAgo }
+        }
+    }
+}
+
+// MARK: - WorkoutShareSheet
+// Presented as a sheet. Renders a styled card via ImageRenderer, then opens system share sheet.
+
+struct WorkoutShareSheet: View {
+    let period: SharePeriod
+    let sessions: [WorkoutSession]
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var shareImage: UIImage? = nil
+    @State private var showActivitySheet = false
+    @State private var isRendering = false
+
+    private var filtered: [WorkoutSession] { period.filter(sessions) }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color(hex: "0A0A0F").ignoresSafeArea()
+
+                if filtered.isEmpty {
+                    // No data for selected period
+                    VStack(spacing: 16) {
+                        Image(systemName: "calendar.badge.exclamationmark")
+                            .font(.system(size: 48))
+                            .foregroundStyle(Color(hex: "333350"))
+                        Text("No workouts for this period")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(Color(hex: "555570"))
+                    }
+                } else {
+                    ScrollView {
+                        VStack(spacing: 24) {
+                            // Live preview of the card
+                            ShareCard(period: period, sessions: filtered)
+                                .clipShape(RoundedRectangle(cornerRadius: 24))
+                                .shadow(color: .black.opacity(0.5), radius: 24, y: 8)
+                                .padding(.horizontal, 20)
+                                .padding(.top, 24)
+
+                            // Share button
+                            Button {
+                                renderAndShare()
+                            } label: {
+                                HStack(spacing: 10) {
+                                    if isRendering {
+                                        ProgressView().tint(.black)
+                                    } else {
+                                        Image(systemName: "square.and.arrow.up")
+                                            .font(.system(size: 16, weight: .bold))
+                                    }
+                                    Text(isRendering ? "Preparing..." : "Share Image")
+                                        .font(.system(size: 17, weight: .bold))
+                                }
+                                .foregroundStyle(.black)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
+                                .background(Color(hex: "00C896"))
+                                .clipShape(RoundedRectangle(cornerRadius: 14))
+                                .padding(.horizontal, 20)
+                            }
+                            .disabled(isRendering)
+
+                            Text("Image saved to share sheet — no data leaves your device.")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Color(hex: "444460"))
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 32)
+                                .padding(.bottom, 32)
+                        }
+                    }
+                }
+            }
+            .navigationTitle(period.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .foregroundStyle(Color(hex: "00C896"))
+                }
+            }
+        }
+        // System share sheet
+        .sheet(isPresented: $showActivitySheet) {
+            if let image = shareImage {
+                ActivityView(image: image)
+            }
+        }
+    }
+
+    private func renderAndShare() {
+        isRendering = true
+        // Render off-main to keep UI responsive
+        Task {
+            let card = ShareCard(period: period, sessions: filtered)
+                .frame(width: 390)   // iPhone 14 Pro width — consistent card size
+
+            let renderer = ImageRenderer(content: card)
+            renderer.scale = 3.0   // @3x for sharp sharing
+
+            let image = renderer.uiImage
+            await MainActor.run {
+                shareImage    = image
+                isRendering   = false
+                showActivitySheet = (image != nil)
+            }
+        }
+    }
+}
+
+// MARK: - ShareCard
+// The actual designed card that gets rendered to an image.
+
+struct ShareCard: View {
+    let period: SharePeriod
+    let sessions: [WorkoutSession]
+
+    private var totalReps:   Int    { sessions.map(\.totalRepsCompleted).reduce(0, +) }
+    private var totalSets:   Int    { sessions.map(\.completedSets).reduce(0, +) }
+    private var avgForm:     Double { sessions.isEmpty ? 0 : sessions.map(\.averageFormScore).reduce(0,+) / Double(sessions.count) }
+    private var totalSecs:   Int    { sessions.map(\.durationSeconds).reduce(0, +) }
+
+    private var durationString: String {
+        let m = totalSecs / 60
+        let h = m / 60
+        if h > 0 { return "\(h)h \(m % 60)m" }
+        return "\(m)m"
+    }
+
+    private var formColor: Color {
+        avgForm >= 0.80 ? Color(hex: "00C896") : avgForm >= 0.50 ? Color(hex: "FFB347") : Color(hex: "FF5F5F")
+    }
+
+    private var periodLabel: String {
+        switch period {
+        case .lastSession: return sessions.first.map { formatted($0.date) } ?? "—"
+        case .today:       return "Today · \(formatted(Date()))"
+        case .thisWeek:    return "This Week"
+        case .thisMonth:   return "This Month"
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            // Background gradient
+            LinearGradient(
+                colors: [Color(hex: "0D0D1A"), Color(hex: "111128")],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            )
+
+            VStack(alignment: .leading, spacing: 0) {
+                // Header
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("GetUp")
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            .foregroundStyle(Color(hex: "00C896"))
+                        Text(periodLabel)
+                            .font(.system(size: 22, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                    Spacer()
+                    Image(systemName: "figure.strengthtraining.traditional")
+                        .font(.system(size: 28))
+                        .foregroundStyle(Color(hex: "00C896").opacity(0.7))
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 28)
+                .padding(.bottom, 24)
+
+                // Divider
+                Rectangle()
+                    .fill(Color(hex: "1E1E35"))
+                    .frame(height: 1)
+                    .padding(.horizontal, 24)
+
+                // Stat grid
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 0) {
+                    CardStat(value: "\(sessions.count)",
+                             label: "Sessions",
+                             icon: "calendar.badge.checkmark",
+                             color: "5BC8FF")
+                    CardStat(value: "\(totalReps)",
+                             label: "Total Reps",
+                             icon: "repeat",
+                             color: "00C896")
+                    CardStat(value: "\(totalSets)",
+                             label: "Total Sets",
+                             icon: "square.stack",
+                             color: "FFB347")
+                    CardStat(value: durationString,
+                             label: "Active Time",
+                             icon: "clock",
+                             color: "BF7FFF")
+                }
+                .padding(.vertical, 8)
+
+                // Form score bar
+                Rectangle()
+                    .fill(Color(hex: "1E1E35"))
+                    .frame(height: 1)
+                    .padding(.horizontal, 24)
+
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Average Form")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color(hex: "555570"))
+                        GeometryReader { g in
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color(hex: "1E1E35"))
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(formColor)
+                                    .frame(width: g.size.width * avgForm)
+                            }
+                        }
+                        .frame(height: 8)
+                    }
+
+                    Text("\(Int(avgForm * 100))%")
+                        .font(.system(size: 26, weight: .heavy, design: .rounded))
+                        .foregroundStyle(formColor)
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 18)
+
+                // Top exercises (if multiple sessions)
+                if sessions.count > 1 {
+                    let exerciseCounts = Dictionary(grouping: sessions, by: \.exerciseName)
+                        .mapValues(\.count)
+                        .sorted { $0.value > $1.value }
+                        .prefix(3)
+
+                    Rectangle()
+                        .fill(Color(hex: "1E1E35"))
+                        .frame(height: 1)
+                        .padding(.horizontal, 24)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("TOP EXERCISES")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Color(hex: "444460"))
+                            .kerning(1)
+                        ForEach(exerciseCounts, id: \.key) { name, count in
+                            HStack {
+                                Text(name)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(.white)
+                                Spacer()
+                                Text("\(count) session\(count > 1 ? "s" : "")")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Color(hex: "555570"))
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 14)
+                }
+
+                // Footer
+                Rectangle()
+                    .fill(Color(hex: "1E1E35"))
+                    .frame(height: 1)
+                    .padding(.horizontal, 24)
+
+                HStack {
+                    Text("getup.app")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color(hex: "333355"))
+                    Spacer()
+                    Text("All data processed on-device")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color(hex: "333355"))
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 14)
+            }
+        }
+    }
+
+    private func formatted(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .none
+        return f.string(from: date)
+    }
+}
+
+// MARK: - CardStat
+
+private struct CardStat: View {
+    let value: String
+    let label: String
+    let icon:  String
+    let color: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color(hex: color))
+                Text(label)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color(hex: "555570"))
+            }
+            Text(value)
+                .font(.system(size: 24, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+    }
+}
+
+// MARK: - ActivityView (UIActivityViewController wrapper)
+
+private struct ActivityView: UIViewControllerRepresentable {
+    let image: UIImage
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(
+            activityItems: [image],
+            applicationActivities: nil
+        )
+    }
+
+    func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
 }
