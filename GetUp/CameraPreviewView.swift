@@ -1,136 +1,106 @@
 // Views/CameraPreviewView.swift
-// Wraps AVCaptureVideoPreviewLayer in a SwiftUI view.
-// The skeleton overlay is drawn on top in SkeletonOverlayView.
+// UIViewRepresentable wrapper for AVCaptureVideoPreviewLayer.
+// Automatically updates the preview layer rotation when the device orientation changes,
+// so the video looks correct in both portrait AND landscape.
 
 import SwiftUI
-import UIKit
 import AVFoundation
-import Vision
-
-
-
-// MARK: - CameraPreviewView
+import UIKit
 
 struct CameraPreviewView: UIViewRepresentable {
     let session: AVCaptureSession
 
-    func makeUIView(context: Context) -> CameraPreviewUIView {
-        let view = CameraPreviewUIView()
-        view.previewLayer.session = session
-        view.previewLayer.videoGravity = .resizeAspectFill
+    func makeUIView(context: Context) -> OrientationAwarePreviewView {
+        let view = OrientationAwarePreviewView(session: session)
+        // Start receiving orientation change notifications
+        UIDevice.current.beginGeneratingDeviceOrientationNotifications()
         return view
     }
 
-    func updateUIView(_ uiView: CameraPreviewUIView, context: Context) {}
-}
-
-// MARK: - CameraPreviewUIView
-
-final class CameraPreviewUIView: UIView {
-
-    override class var layerClass: AnyClass {
-        AVCaptureVideoPreviewLayer.self
-    }
-
-    var previewLayer: AVCaptureVideoPreviewLayer {
-        layer as! AVCaptureVideoPreviewLayer
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        previewLayer.frame = bounds
+    func updateUIView(_ uiView: OrientationAwarePreviewView, context: Context) {
+        // Called when SwiftUI re-renders — update frame + orientation
+        uiView.updateOrientation()
     }
 }
 
-// MARK: - SkeletonOverlayView
-// Draws the skeleton on top of the camera feed using SwiftUI Canvas
+// MARK: - OrientationAwarePreviewView
 
-struct SkeletonOverlayView: View {
-    let poseResult: PoseDetectionResult
-    let size: CGSize
+final class OrientationAwarePreviewView: UIView {
 
-    var body: some View {
-        Canvas { context, canvasSize in
-            guard !poseResult.isEmpty else { return }
+    // MARK: Layer
 
-            let joints = poseResult.joints
+    private let previewLayer: AVCaptureVideoPreviewLayer
 
-            // Draw bones (lines between joints)
-            for bone in SkeletonModel.bones {
-                guard
-                    let fromPoint = joints[bone.from],
-                    let toPoint   = joints[bone.to],
-                    fromPoint.confidence >= 0.3,
-                    toPoint.confidence >= 0.3
-                else { continue }
+    // MARK: Init
 
-                let from = convertPoint(fromPoint.location, in: canvasSize)
-                let to   = convertPoint(toPoint.location,   in: canvasSize)
+    init(session: AVCaptureSession) {
+        previewLayer = AVCaptureVideoPreviewLayer(session: session)
+        previewLayer.videoGravity = .resizeAspectFill
+        super.init(frame: .zero)
+        backgroundColor = .black
+        layer.addSublayer(previewLayer)
 
-                var path = Path()
-                path.move(to: from)
-                path.addLine(to: to)
-
-                context.stroke(
-                    path,
-                    with: .color(.white.opacity(0.55)),
-                    style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
-                )
-            }
-
-            // Draw joint dots
-            for (name, point) in joints {
-                guard point.confidence >= 0.3 else { continue }
-
-                let screenPoint = convertPoint(point.location, in: canvasSize)
-                let radius: CGFloat = isKeyJoint(name) ? 6 : 4
-
-                let dotRect = CGRect(
-                    x: screenPoint.x - radius,
-                    y: screenPoint.y - radius,
-                    width: radius * 2,
-                    height: radius * 2
-                )
-
-                // Outer ring
-                context.stroke(
-                    Circle().path(in: dotRect.insetBy(dx: -1, dy: -1)),
-                    with: .color(.white.opacity(0.4)),
-                    lineWidth: 1
-                )
-
-                // Filled dot — colour by confidence
-                let dotColor = colorForConfidence(Double(point.confidence))
-                context.fill(Circle().path(in: dotRect), with: .color(dotColor))
-            }
-        }
-    }
-
-    // MARK: - Helpers
-
-    /// Vision coordinates: (0,0) = bottom-left. Convert to screen: (0,0) = top-left.
-    private func convertPoint(_ point: CGPoint, in size: CGSize) -> CGPoint {
-        CGPoint(
-            x: point.x * size.width,
-            y: (1.0 - point.y) * size.height
+        // Listen for device rotation
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(orientationDidChange),
+            name: UIDevice.orientationDidChangeNotification,
+            object: nil
         )
     }
 
-    private func isKeyJoint(_ name: VNHumanBodyPoseObservation.JointName) -> Bool {
-        switch name {
-        case .leftElbow, .rightElbow, .leftKnee, .rightKnee,
-             .leftShoulder, .rightShoulder, .leftHip, .rightHip:
-            return true
-        default:
-            return false
-        }
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
-    private func colorForConfidence(_ confidence: Double) -> Color {
-        switch confidence {
-        case 0.8...: return Color(hex: "00C896")   // green — high confidence
-        case 0.5..<0.8: return Color(hex: "FFB740") // amber — medium
-        default: return Color(hex: "FF5A5A")         // red — low
+    // MARK: Layout
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // Keep layer filling the view on every layout pass (rotation, split-view, etc.)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)   // no implicit animation on frame change
+        previewLayer.frame = bounds
+        CATransaction.commit()
+        updateOrientation()
+    }
+
+    // MARK: Orientation
+
+    @objc func orientationDidChange() {
+        updateOrientation()
+    }
+
+    /// Maps UIDevice orientation → AVCaptureConnection videoRotationAngle.
+    ///
+    /// The camera sensor is physically landscape. videoRotationAngle rotates
+    /// the rendered content so it appears upright for the current device orientation:
+    ///   Portrait              →  90°
+    ///   Landscape left        →   0°   (home/USB-C button on right)
+    ///   Landscape right       → 180°   (home/USB-C button on left)
+    ///   Portrait upside-down  → 270°
+    func updateOrientation() {
+        guard let connection = previewLayer.connection else { return }
+
+        let deviceOrientation = UIDevice.current.orientation
+        let angle: CGFloat
+
+        switch deviceOrientation {
+        case .portrait:           angle = 90
+        case .portraitUpsideDown: angle = 270
+        case .landscapeLeft:      angle = 0     // device rotated left → home button on right
+        case .landscapeRight:     angle = 180   // device rotated right → home button on left
+        default:
+            // Flat / unknown — keep current angle, don't snap to wrong orientation
+            return
+        }
+
+        // isVideoRotationAngleSupported is available iOS 17+
+        // The app targets iOS 17, so this is always available
+        if connection.isVideoRotationAngleSupported(angle) {
+            connection.videoRotationAngle = angle
         }
     }
 }
