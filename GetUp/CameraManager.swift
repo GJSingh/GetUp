@@ -14,7 +14,6 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var isRunning = false
     @Published var isCameraAuthorised = false
     @Published var errorMessage: String?
-    @Published var zoomFactor: CGFloat = 1.0   // live zoom level, read by ZoomHUD
 
     // MARK: Capture Session
     let captureSession = AVCaptureSession()
@@ -23,12 +22,11 @@ final class CameraManager: NSObject, ObservableObject {
 
     // MARK: Frame Delivery
     /// Called on a background thread with each new camera frame.
-    var onFrame: ((CVPixelBuffer) -> Void)?
+    /// nonisolated(unsafe): safe to read from nonisolated delegate — written once, never mutated during delivery.
+    nonisolated(unsafe) var onFrame: ((CVPixelBuffer) -> Void)?
 
     // MARK: Camera Position
     private(set) var position: AVCaptureDevice.Position = .back
-    // Tracked so zoom can always target the active device
-    private var currentDevice: AVCaptureDevice?
 
     override init() {
         super.init()
@@ -75,7 +73,8 @@ final class CameraManager: NSObject, ObservableObject {
                 return
             }
             self.captureSession.addInput(input)
-            self.currentDevice = device   // track for zoom
+
+            // KEY FIX: pass nil as queue so the delegate is called on sessionQueue
             // and mark captureOutput as nonisolated below — this resolves the Swift 6 warning
             self.videoOutput.setSampleBufferDelegate(self, queue: self.sessionQueue)
             self.videoOutput.alwaysDiscardsLateVideoFrames = true
@@ -91,6 +90,9 @@ final class CameraManager: NSObject, ObservableObject {
                 connection.videoRotationAngle = 90
                 connection.isVideoMirrored = (self.position == .front)
             }
+
+            // Store device reference for zoom
+            DispatchQueue.main.async { self.captureDevice = device }
 
             self.captureSession.commitConfiguration()
         }
@@ -130,37 +132,47 @@ final class CameraManager: NSObject, ObservableObject {
                 return
             }
             self.captureSession.addInput(input)
-            self.currentDevice = device   // track for zoom after flip
 
             if let connection = self.videoOutput.connection(with: .video) {
                 connection.isVideoMirrored = (self.position == .front)
             }
             self.captureSession.commitConfiguration()
+            // Update stored device and reset zoom on camera flip
+            DispatchQueue.main.async {
+                self.captureDevice = device
+                self.zoomFactor = 1.0
+            }
         }
     }
 
+
     // MARK: - Zoom
 
-    /// Set zoom level. Safe to call from any thread.
-    /// Clamped to 1× … min(device max, 8×).
+    /// Current zoom factor — published so ZoomHUD can observe it
+    @Published var zoomFactor: CGFloat = 1.0
+
+    /// Set zoom to an exact factor, clamped to 1× – 8×
     func setZoom(_ factor: CGFloat) {
-        sessionQueue.async { [weak self] in
-            guard let self, let device = self.currentDevice else { return }
-            let maxZoom = min(device.activeFormat.videoMaxZoomFactor, 8.0)
-            let clamped = max(1.0, min(factor, maxZoom))
+        guard let device = captureDevice else { return }
+        let maxZoom = min(device.activeFormat.videoMaxZoomFactor, 8.0)
+        let clamped = max(1.0, min(factor, maxZoom))
+        sessionQueue.async {
             do {
                 try device.lockForConfiguration()
                 device.videoZoomFactor = clamped
                 device.unlockForConfiguration()
             } catch {
-                print("CameraManager.setZoom error: \(error)")
+                print("[CameraManager] zoom error: \(error)")
             }
-            DispatchQueue.main.async { self.zoomFactor = clamped }
         }
+        DispatchQueue.main.async { self.zoomFactor = clamped }
     }
 
     func zoomIn()  { setZoom(zoomFactor + 0.5) }
     func zoomOut() { setZoom(max(1.0, zoomFactor - 0.5)) }
+
+    // Exposed so zoom can query max zoom without locking config
+    private(set) var captureDevice: AVCaptureDevice?
 
     // MARK: - Helpers
 

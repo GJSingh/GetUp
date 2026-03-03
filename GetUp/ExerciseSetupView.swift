@@ -57,6 +57,14 @@ struct ExerciseSetupView: View {
         .sheet(item: $selectedDetailExercise) { ex in
             ExerciseDetailSheet(exercise: ex)
         }
+        // Present ActiveWorkoutView when workout starts — dismissed when vm.state returns to .setup
+        .fullScreenCover(isPresented: Binding(
+            get: { vm.state != .setup },
+            set: { if !$0 { vm.resetToSetup() } }
+        )) {
+            ActiveWorkoutView()
+                .environmentObject(vm)
+        }
     }
 
     // MARK: - Header

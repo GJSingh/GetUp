@@ -1,36 +1,23 @@
 // Utils/AppOrientationHelper.swift
-// Unlocks landscape rotation for the active workout screen.
+// Unlocks landscape rotation for the active workout screen only.
 // All other screens stay portrait.
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// SETUP — add ONE property to your existing App struct in GetUpApp.swift:
+// SETUP — add this one method to your existing AppDelegate.swift:
 //
-//   @UIApplicationDelegateAdaptor(GetUpAppDelegate.self) var appDelegate
-//
-// It must go INSIDE the App struct body, like this:
-//
-//   @main
-//   struct GetUpApp: App {
-//       @UIApplicationDelegateAdaptor(GetUpAppDelegate.self) var appDelegate
-//       // ... rest of your existing code unchanged
+//   func application(
+//       _ application: UIApplication,
+//       supportedInterfaceOrientationsFor window: UIWindow?
+//   ) -> UIInterfaceOrientationMask {
+//       return AppOrientationHelper.orientationLock
 //   }
 //
-// GetUpAppDelegate is defined in this file — no other changes needed.
+// Your GetUpApp.swift already has @UIApplicationDelegateAdaptor(AppDelegate.self)
+// so no other changes are needed anywhere.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import UIKit
 import SwiftUI
-
-// MARK: - GetUpAppDelegate
-
-class GetUpAppDelegate: NSObject, UIApplicationDelegate {
-    func application(
-        _ application: UIApplication,
-        supportedInterfaceOrientationsFor window: UIWindow?
-    ) -> UIInterfaceOrientationMask {
-        AppOrientationHelper.orientationLock
-    }
-}
 
 // MARK: - AppOrientationHelper
 

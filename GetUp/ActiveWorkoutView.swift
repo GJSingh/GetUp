@@ -102,21 +102,15 @@ struct ActiveWorkoutView: View {
             vm.camera.stop()
             AudioManager.shared.stop()
         }
-        // UIDevice.orientationDidChangeNotification fires on main thread.
-        // Read interfaceOrientation immediately — it's already settled.
-        .onReceive(
-            NotificationCenter.default.publisher(
-                for: UIDevice.orientationDidChangeNotification)
-        ) { _ in
-            guard let scene = UIApplication.shared.connectedScenes
-                .compactMap({ $0 as? UIWindowScene }).first else { return }
-            let landscape = scene.interfaceOrientation.isLandscape
-            guard landscape != isLandscape else { return }
-            // Disable SwiftUI animation on layout switch — iOS handles its own
-            // rotation animation. If both run simultaneously the view hangs/judders.
+        // onGeometryChange fires AFTER layout completes with settled geometry —
+        // more reliable than UIDevice.orientationDidChangeNotification on iOS 26.
+        .onGeometryChange(for: Bool.self) { proxy in
+            proxy.size.width > proxy.size.height
+        } action: { newIsLandscape in
+            guard newIsLandscape != isLandscape else { return }
             var t = Transaction()
             t.disablesAnimations = true
-            withTransaction(t) { isLandscape = landscape }
+            withTransaction(t) { isLandscape = newIsLandscape }
         }
         .alert("End Workout?", isPresented: $showEndConfirmation) {
             Button("End & Save", role: .destructive) {

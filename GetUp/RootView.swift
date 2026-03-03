@@ -1,53 +1,58 @@
 // Views/RootView.swift
-// Navigation root — tabs for Workout, History, and Settings.
+// Root navigation container.
+// Shows OnboardingView on first launch, then the main TabView.
+// Owns WorkoutViewModel as a StateObject and injects it into the view hierarchy.
 
 import SwiftUI
 
 struct RootView: View {
+
+    // Persisted across launches — flipped to true when onboarding finishes
+    @AppStorage("hasSeenOnboarding") private var hasSeenOnboarding = false
+
+    // Single source of truth for the workout session — shared across all tabs
     @StateObject private var workoutVM = WorkoutViewModel()
-    @State private var selectedTab = 0
+
+    @State private var selectedTab: Tab = .workout
+
+    enum Tab { case workout, history, settings }
 
     var body: some View {
+        Group {
+            if !hasSeenOnboarding {
+                OnboardingView(hasSeenOnboarding: $hasSeenOnboarding)
+                    .transition(.opacity)
+            } else {
+                mainTabs
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.4), value: hasSeenOnboarding)
+    }
+
+    // MARK: - Main Tabs
+
+    private var mainTabs: some View {
         TabView(selection: $selectedTab) {
-            WorkoutRootView()
-                .environmentObject(workoutVM)
+            ExerciseSetupView()
                 .tabItem {
                     Label("Workout", systemImage: "figure.strengthtraining.traditional")
                 }
-                .tag(0)
+                .tag(Tab.workout)
 
             HistoryView()
                 .tabItem {
                     Label("History", systemImage: "chart.bar.fill")
                 }
-                .tag(1)
+                .tag(Tab.history)
 
             SettingsView()
                 .tabItem {
                     Label("Settings", systemImage: "gearshape.fill")
                 }
-                .tag(2)
+                .tag(Tab.settings)
         }
         .tint(Color(hex: "00C896"))
-        .background(Color(hex: "0A0A0F"))
-    }
-}
-
-// MARK: - Workout Root (handles setup vs active workout)
-
-struct WorkoutRootView: View {
-    @EnvironmentObject var vm: WorkoutViewModel
-
-    var body: some View {
-        switch vm.state {
-        case .setup:
-            ExerciseSetupView()
-        case .countdown:
-            CountdownView()
-        case .active, .resting:
-            ActiveWorkoutView()
-        case .complete:
-            WorkoutCompleteView()
-        }
+        .environmentObject(workoutVM)   // injects vm into ExerciseSetupView, ActiveWorkoutView, and all descendants
     }
 }

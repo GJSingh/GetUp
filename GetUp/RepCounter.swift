@@ -116,12 +116,13 @@ final class RepCounter: ObservableObject {
     private func startRestTimer() {
         restSecondsRemaining = restDurationSeconds
         restTimer?.invalidate()
-        restTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+        let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
             Task { @MainActor [weak self] in
-                guard let self else { timer.invalidate(); return }
+                guard let self else { return }
                 self.restSecondsRemaining -= 1
                 if self.restSecondsRemaining <= 0 {
-                    timer.invalidate()
+                    self.restTimer?.invalidate()
                     self.restTimer            = nil
                     self.restSecondsRemaining = 0
                     self.repPhase             = .start
@@ -129,6 +130,8 @@ final class RepCounter: ObservableObject {
                 }
             }
         }
+        RunLoop.main.add(t, forMode: .common)
+        restTimer = t
     }
 
     func skipRest() {

@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 
+
 @main
 struct GetUpApp: App {
 

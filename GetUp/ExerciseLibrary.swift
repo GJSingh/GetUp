@@ -42,11 +42,13 @@ enum RepPhase {
 enum ExerciseCategory: String, CaseIterable {
     case strength = "Strength"
     case yoga     = "Yoga"
+    case dance    = "Dance"
 
     var emoji: String {
         switch self {
         case .strength: return "🏋️"
         case .yoga:     return "🧘"
+        case .dance:    return "🕺"
         }
     }
 }
@@ -89,6 +91,9 @@ enum ExerciseLibrary {
         treePose,
         downwardDog,
         chairPose,
+        // Dance ↓
+        zumbaHipShake, bhangraArmPump, salsaSideStep, armWave, jumpingJackGroove,
+        bodyRoll, bhangraGiddhaHands, latinHipSway, chestPop, fullBodyGroove,
     ]
 
     static func exercise(id: String) -> ExerciseDefinition? {
@@ -704,5 +709,394 @@ enum ExerciseAnalysers {
         }
 
         return (PostureFeedback(quality: .good, message: "Bend your knees", detail: "Lower your hips as if sitting back into a chair."), false)
+    }
+}
+
+
+// ─── Dance ExerciseDefinitions ───────────────────────────────────────────────
+
+extension ExerciseLibrary {
+
+    // MARK: Zumba Hip Shake (lower body / whole body)
+    static let zumbaHipShake = ExerciseDefinition(
+        id: "zumba_hip_shake",
+        name: "Zumba Hip Shake",
+        emoji: "🌶️",
+        description: "Latin-inspired hip circles and side-to-side shakes. Loosens the hips and gets your heart rate up fast.",
+        muscleGroups: ["Hips", "Core", "Glutes"],
+        defaultSets: 3,
+        defaultReps: 30,
+        cameraSetup: "Place phone facing you at hip height so your full body from head to toe is visible.",
+        category: .dance,
+        isHoldPose: true   // timer-based: hold/continue the move for N seconds
+    ) { joints in ExerciseAnalysers.danceHipMove(joints: joints) }
+
+    // MARK: Bhangra Arm Pump (upper body)
+    static let bhangraArmPump = ExerciseDefinition(
+        id: "bhangra_arm_pump",
+        name: "Bhangra Arm Pump",
+        emoji: "🥁",
+        description: "Classic Punjabi Bhangra move — pump both arms overhead alternately in time with a dhol beat. High energy, great for shoulders and arms.",
+        muscleGroups: ["Shoulders", "Arms", "Core"],
+        defaultSets: 3,
+        defaultReps: 30,
+        cameraSetup: "Stand facing camera. Make sure your arms are visible above your head.",
+        category: .dance,
+        isHoldPose: true
+    ) { joints in ExerciseAnalysers.danceArmsOverhead(joints: joints) }
+
+    // MARK: Salsa Side Step (lower body / whole body)
+    static let salsaSideStep = ExerciseDefinition(
+        id: "salsa_side_step",
+        name: "Salsa Side Step",
+        emoji: "💃",
+        description: "Step side to side with Latin flair — weight shifts, hip accent on each step. Cardio + coordination.",
+        muscleGroups: ["Legs", "Hips", "Calves"],
+        defaultSets: 3,
+        defaultReps: 30,
+        cameraSetup: "Stand facing camera at full-body distance. You need at least 1 metre each side to step.",
+        category: .dance,
+        isHoldPose: true
+    ) { joints in ExerciseAnalysers.danceHipMove(joints: joints) }
+
+    // MARK: Arm Wave (upper body)
+    static let armWave = ExerciseDefinition(
+        id: "arm_wave",
+        name: "Arm Wave",
+        emoji: "🌊",
+        description: "Rolling wave motion through shoulders, elbows and wrists. Improves upper body mobility and coordination.",
+        muscleGroups: ["Shoulders", "Arms", "Wrists"],
+        defaultSets: 3,
+        defaultReps: 30,
+        cameraSetup: "Stand facing camera with arms extended — full arm span needs to be in frame.",
+        category: .dance,
+        isHoldPose: true
+    ) { joints in ExerciseAnalysers.danceArmsOut(joints: joints) }
+
+    // MARK: Jumping Jack Groove (whole body)
+    static let jumpingJackGroove = ExerciseDefinition(
+        id: "jumping_jack_groove",
+        name: "Jump & Clap",
+        emoji: "⚡",
+        description: "Jumping jacks with a rhythmic clap overhead — classic cardio with dance energy. Gets your whole body moving.",
+        muscleGroups: ["Full Body", "Cardio", "Legs"],
+        defaultSets: 3,
+        defaultReps: 30,
+        cameraSetup: "Stand facing camera. Full body head to toe must be in frame — step back if needed.",
+        category: .dance,
+        isHoldPose: true
+    ) { joints in ExerciseAnalysers.danceArmsOverhead(joints: joints) }
+
+    // MARK: Body Roll (whole body)
+    static let bodyRoll = ExerciseDefinition(
+        id: "body_roll",
+        name: "Body Roll",
+        emoji: "🔄",
+        description: "A smooth wave from chest down through the hips. A foundational move in hip-hop, dancehall and contemporary dance. Core-focused.",
+        muscleGroups: ["Core", "Spine", "Hips"],
+        defaultSets: 3,
+        defaultReps: 30,
+        cameraSetup: "Side-on to camera works best — profile view shows the roll clearly.",
+        category: .dance,
+        isHoldPose: true
+    ) { joints in ExerciseAnalysers.danceHipMove(joints: joints) }
+
+    // MARK: Bhangra Giddha Hands (upper body)
+    static let bhangraGiddhaHands = ExerciseDefinition(
+        id: "bhangra_giddha_hands",
+        name: "Giddha Clap",
+        emoji: "🙌",
+        description: "Traditional Punjabi Giddha hand clapping patterns — rhythmic overhead and side claps that tone arms and improve rhythm.",
+        muscleGroups: ["Arms", "Shoulders", "Coordination"],
+        defaultSets: 3,
+        defaultReps: 30,
+        cameraSetup: "Face the camera at arm-length distance so your full arm sweep is visible.",
+        category: .dance,
+        isHoldPose: true
+    ) { joints in ExerciseAnalysers.danceArmsOut(joints: joints) }
+
+    // MARK: Latin Hip Sway (lower body)
+    static let latinHipSway = ExerciseDefinition(
+        id: "latin_hip_sway",
+        name: "Latin Hip Sway",
+        emoji: "🎵",
+        description: "Slow, controlled side-to-side hip swaying from merengue/bachata. Tones obliques and improves hip mobility.",
+        muscleGroups: ["Obliques", "Hips", "Lower Back"],
+        defaultSets: 3,
+        defaultReps: 30,
+        cameraSetup: "Face camera directly. Hip width and movement need to be clearly visible.",
+        category: .dance,
+        isHoldPose: true
+    ) { joints in ExerciseAnalysers.danceHipMove(joints: joints) }
+
+    // MARK: Chest Pop (upper body)
+    static let chestPop = ExerciseDefinition(
+        id: "chest_pop",
+        name: "Chest Pop",
+        emoji: "💥",
+        description: "Sharp chest isolations forward and back — a street dance and hip-hop fundamental. Opens chest, strengthens posture muscles.",
+        muscleGroups: ["Chest", "Upper Back", "Posture"],
+        defaultSets: 3,
+        defaultReps: 30,
+        cameraSetup: "Side profile OR front-facing. Full torso needs to be visible.",
+        category: .dance,
+        isHoldPose: true
+    ) { joints in ExerciseAnalysers.danceShoulderCheck(joints: joints) }
+
+    // MARK: Full Body Groove (whole body)
+    static let fullBodyGroove = ExerciseDefinition(
+        id: "full_body_groove",
+        name: "Full Body Groove",
+        emoji: "🎉",
+        description: "Free-style combination: arms, hips, steps — your choice of moves. Just keep moving and stay in the groove for the full timer.",
+        muscleGroups: ["Full Body", "Cardio", "Coordination"],
+        defaultSets: 2,
+        defaultReps: 60,
+        cameraSetup: "Full body from head to toe. Give yourself space to move freely.",
+        category: .dance,
+        isHoldPose: true
+    ) { joints in ExerciseAnalysers.danceFullBody(joints: joints) }
+}
+
+// ─── Dance Analysers ──────────────────────────────────────────────────────────
+
+extension ExerciseAnalysers {
+
+    // Generic "are hips moving / shifted" check — used for hip-based dances
+    static func danceHipMove(
+        joints: [VNHumanBodyPoseObservation.JointName: VNRecognizedPoint]
+    ) -> (PostureFeedback, repCompleted: Bool) {
+
+        let lh = joints[.leftHip]; let rh = joints[.rightHip]
+        let ls = joints[.leftShoulder]; let rs = joints[.rightShoulder]
+
+        guard let lh, let rh, let ls, let rs,
+              JointMath.isReliable(lh), JointMath.isReliable(rh),
+              JointMath.isReliable(ls), JointMath.isReliable(rs)
+        else { return (.waiting, false) }
+
+        // Hip mid vs shoulder mid — offset means hips are shifted/swaying
+        let hipMidX = (lh.location.x + rh.location.x) / 2
+        let shoulderMidX = (ls.location.x + rs.location.x) / 2
+        let hipShift = abs(hipMidX - shoulderMidX)
+
+        // Hips should not be fully locked — some sway is key
+        if hipShift < 0.03 {
+            return (PostureFeedback(
+                quality: .needsWork,
+                message: "Let those hips move! 🌶️",
+                detail: "Shift your weight side to side. Don't stand stiff!"
+            ), false)
+        } else if hipShift < 0.07 {
+            return (PostureFeedback(
+                quality: .good,
+                message: "Getting there! Keep going 🎵",
+                detail: "More hip movement — exaggerate the sway a little."
+            ), false)
+        } else {
+            return (PostureFeedback(
+                quality: .excellent,
+                message: "Feeling it! 🔥",
+                detail: "Great hip movement. Keep the rhythm going!"
+            ), false)
+        }
+    }
+
+    // Arms overhead check — used for Bhangra, Jump & Clap
+    static func danceArmsOverhead(
+        joints: [VNHumanBodyPoseObservation.JointName: VNRecognizedPoint]
+    ) -> (PostureFeedback, repCompleted: Bool) {
+
+        let lw = joints[.leftWrist];  let rw = joints[.rightWrist]
+        let ls = joints[.leftShoulder]; let rs = joints[.rightShoulder]
+        let le = joints[.leftElbow];  let re = joints[.rightElbow]
+
+        guard let lw, let rw, let ls, let rs,
+              JointMath.isReliable(lw), JointMath.isReliable(rw),
+              JointMath.isReliable(ls), JointMath.isReliable(rs)
+        else { return (.waiting, false) }
+
+        let leftUp  = lw.location.y > ls.location.y + 0.08
+        let rightUp = rw.location.y > rs.location.y + 0.08
+
+        // Check at least one arm is moving (alternating pump counts)
+        let eitherUp = leftUp || rightUp
+        let bothUp   = leftUp && rightUp
+
+        // Also check elbows are engaged (not dangling)
+        let elbowsActive: Bool = {
+            guard let le, let re,
+                  JointMath.isReliable(le), JointMath.isReliable(re) else { return true }
+            return le.location.y > ls.location.y - 0.05 ||
+                   re.location.y > rs.location.y - 0.05
+        }()
+
+        if !eitherUp {
+            return (PostureFeedback(
+                quality: .needsWork,
+                message: "Arms up! ✋",
+                detail: "Pump your arms overhead — that's the key move!"
+            ), false)
+        } else if !elbowsActive {
+            return (PostureFeedback(
+                quality: .needsWork,
+                message: "Engage your elbows",
+                detail: "Bend elbows as you pump — don't keep arms straight."
+            ), false)
+        } else if bothUp {
+            return (PostureFeedback(
+                quality: .excellent,
+                message: "Incredible energy! 🥁",
+                detail: "Both arms pumping! Keep the beat going!"
+            ), false)
+        } else {
+            return (PostureFeedback(
+                quality: .good,
+                message: "Pump it! 💪",
+                detail: "Keep alternating those arms. Feel the rhythm!"
+            ), false)
+        }
+    }
+
+    // Arms extended sideways — used for Arm Wave, Giddha Clap
+    static func danceArmsOut(
+        joints: [VNHumanBodyPoseObservation.JointName: VNRecognizedPoint]
+    ) -> (PostureFeedback, repCompleted: Bool) {
+
+        let lw = joints[.leftWrist];  let rw = joints[.rightWrist]
+        let ls = joints[.leftShoulder]; let rs = joints[.rightShoulder]
+        let le = joints[.leftElbow];  _ = joints[.rightElbow]
+        
+        guard let lw, let rw, let ls, let rs,
+              JointMath.isReliable(lw), JointMath.isReliable(rw),
+              JointMath.isReliable(ls), JointMath.isReliable(rs)
+        else { return (.waiting, false) }
+
+        // Wrists should be at roughly shoulder height and wide apart
+        let leftAtHeight  = abs(lw.location.y - ls.location.y) < 0.12
+        let rightAtHeight = abs(rw.location.y - rs.location.y) < 0.12
+
+        // Wrists should be outside the shoulders
+        let leftExtended  = lw.location.x < ls.location.x - 0.05
+        let rightExtended = rw.location.x > rs.location.x + 0.05
+
+        _ = le  // elbowsVisible check omitted — always true
+
+        if !leftExtended && !rightExtended {
+            return (PostureFeedback(
+                quality: .needsWork,
+                message: "Spread your arms wide 🌊",
+                detail: "Extend arms out to the sides at shoulder height."
+            ), false)
+        } else if !(leftAtHeight && rightAtHeight) {
+            return (PostureFeedback(
+                quality: .needsWork,
+                message: "Bring arms to shoulder height",
+                detail: "Keep your arms level — not too high or too low."
+            ), false)
+        } else {
+            return (PostureFeedback(
+                quality: .excellent,
+                message: "Flowing beautifully! 🌊",
+                detail: "Arms out, roll that wave from shoulder to wrist!"
+            ), false)
+        }
+    }
+
+    // Shoulder symmetry check — used for Chest Pop
+    static func danceShoulderCheck(
+        joints: [VNHumanBodyPoseObservation.JointName: VNRecognizedPoint]
+    ) -> (PostureFeedback, repCompleted: Bool) {
+
+        let ls = joints[.leftShoulder]; let rs = joints[.rightShoulder]
+        let lh = joints[.leftHip];      let rh = joints[.rightHip]
+
+        guard let ls, let rs, let lh, let rh,
+              JointMath.isReliable(ls), JointMath.isReliable(rs),
+              JointMath.isReliable(lh), JointMath.isReliable(rh)
+        else { return (.waiting, false) }
+
+        let shoulderMidX = (ls.location.x + rs.location.x) / 2
+        let hipMidX      = (lh.location.x + rh.location.x) / 2
+
+        // Forward chest pop = shoulder mid shifts forward of hips
+        let chestForward = abs(shoulderMidX - hipMidX) > 0.04
+
+        // Shoulders should stay level (not tilted)
+        let shoulderLevel = abs(ls.location.y - rs.location.y) < 0.05
+
+        if !shoulderLevel {
+            return (PostureFeedback(
+                quality: .needsWork,
+                message: "Level your shoulders",
+                detail: "Keep shoulders even — the pop is forward and back, not a tilt."
+            ), false)
+        } else if !chestForward {
+            return (PostureFeedback(
+                quality: .good,
+                message: "Pop that chest! 💥",
+                detail: "Isolate your chest — push it forward sharply, then pull back."
+            ), false)
+        } else {
+            return (PostureFeedback(
+                quality: .excellent,
+                message: "Sharp isolation! 🔥",
+                detail: "That's the move. Keep the pops crisp and rhythmic!"
+            ), false)
+        }
+    }
+
+    // Full body activity check — just confirms person is upright and visible
+    static func danceFullBody(
+        joints: [VNHumanBodyPoseObservation.JointName: VNRecognizedPoint]
+    ) -> (PostureFeedback, repCompleted: Bool) {
+
+        let ls = joints[.leftShoulder]; let rs = joints[.rightShoulder]
+        let lk = joints[.leftKnee];     let rk = joints[.rightKnee]
+        let lw = joints[.leftWrist];    let rw = joints[.rightWrist]
+
+        // Need at least shoulders + knees visible
+        guard let ls, let rs,
+              JointMath.isReliable(ls), JointMath.isReliable(rs)
+        else {
+            return (PostureFeedback(
+                quality: .needsWork,
+                message: "Step back — show full body 📷",
+                detail: "Camera needs to see you from head to toe."
+            ), false)
+        }
+
+        let kneesSeen = (lk != nil && JointMath.isReliable(lk!)) ||
+                        (rk != nil && JointMath.isReliable(rk!))
+
+        if !kneesSeen {
+            return (PostureFeedback(
+                quality: .needsWork,
+                message: "Step back a little 📷",
+                detail: "Move further from the camera so your full body is in frame."
+            ), false)
+        }
+
+        // Check if arms are moving (at least one wrist at different height than shoulder)
+        let armsActive: Bool = {
+            guard let lw, let rw,
+                  JointMath.isReliable(lw), JointMath.isReliable(rw) else { return false }
+            return abs(lw.location.y - ls.location.y) > 0.05 ||
+                   abs(rw.location.y - rs.location.y) > 0.05
+        }()
+
+        if !armsActive {
+            return (PostureFeedback(
+                quality: .good,
+                message: "Move those arms! 🎉",
+                detail: "Get your whole body grooving — arms, hips, everything!"
+            ), false)
+        }
+
+        return (PostureFeedback(
+            quality: .excellent,
+            message: "Yes! Keep grooving! 🎊",
+            detail: "Looking great. Stay in the zone for the full timer!"
+        ), false)
     }
 }

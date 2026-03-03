@@ -1,12 +1,12 @@
 // Views/CameraPreviewView.swift
 // Orientation-aware AVCaptureVideoPreviewLayer.
 //
-// Design:
-// - Listens to UIDevice.orientationDidChangeNotification (fires once per rotation, on main thread)
-// - Reads UIWindowScene.interfaceOrientation — already settled when notification arrives
-// - Does NOT use traitCollectionDidChange — on iPhone, size class stays .compact in both
-//   portrait and landscape, so that callback never fires for orientation changes
-// - Frame updates use CATransaction.setDisableActions(true) to prevent fighting iOS animation
+// WHY layoutSubviews instead of notifications:
+//   UIDevice.orientationDidChangeNotification fires BEFORE windowScene.interfaceOrientation
+//   updates — so reading the scene in the notification callback returns the OLD orientation.
+//   layoutSubviews is called AFTER iOS finishes its rotation animation and the view has
+//   its final bounds + the window scene has its correct interfaceOrientation.
+//   This eliminates all timing races.
 
 import SwiftUI
 import AVFoundation
@@ -23,7 +23,8 @@ struct CameraPreviewView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: PreviewView, context: Context) {
-        uiView.syncFrame()
+        // Called on every SwiftUI render pass — keeps frame + rotation in sync
+        uiView.syncFrameAndRotation()
     }
 }
 
@@ -39,86 +40,84 @@ final class PreviewView: UIView {
         super.init(frame: .zero)
         backgroundColor = .black
         layer.addSublayer(previewLayer)
-        applyRotation(angle: 90)   // default portrait
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(deviceOrientationChanged),
-            name: UIDevice.orientationDidChangeNotification,
-            object: nil
-        )
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    deinit {
-        NotificationCenter.default.removeObserver(self)
+    // MARK: - Layout
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        syncFrameAndRotation()
     }
 
-    // MARK: - Frame
-
-    func syncFrame() {
+    /// Updates both the layer frame and the video rotation angle.
+    /// Safe to call from layoutSubviews or updateUIView — both run on the main thread
+    /// after the view hierarchy has settled into its final state.
+    func syncFrameAndRotation() {
+        // Resize layer without implicit CA animation (prevents fighting iOS rotation animation)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         previewLayer.frame = bounds
         CATransaction.commit()
+
+        // Apply correct video rotation based on current interface orientation
+        setVideoRotation()
+
+        // On fullScreenCover presentation the view lays out before the window scene
+        // is attached, so window?.windowScene returns nil and we fall back to the
+        // aspect-ratio guess (which can't distinguish landscapeLeft from landscapeRight).
+        // Schedule a follow-up correction once the scene is guaranteed to be available.
+        if window?.windowScene == nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                self?.setVideoRotation()
+            }
+        }
     }
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        syncFrame()
-    }
+    // MARK: - Rotation
 
-    // MARK: - Orientation
-
-    @objc private func deviceOrientationChanged() {
-        // UIDevice.orientationDidChangeNotification fires on the main thread.
-        // UIWindowScene.interfaceOrientation is already the final settled value here.
-        applyRotation(angle: currentAngle())
-    }
-
-    private func applyRotation(angle: CGFloat) {
-        guard let connection = previewLayer.connection,
-              connection.isVideoRotationAngleSupported(angle) else { return }
+    private func setVideoRotation() {
+        guard let connection = previewLayer.connection else { return }
+        let angle = currentRotationAngle()
+        guard connection.isVideoRotationAngleSupported(angle) else { return }
         connection.videoRotationAngle = angle
     }
 
-    /// Maps interface orientation to videoRotationAngle.
+    /// Derives the correct videoRotationAngle from the current interface orientation.
     ///
-    ///  Portrait            →  90°   (sensor is landscape, rotate 90° to stand upright)
-    ///  LandscapeLeft       →   0°   (home/USB on right — matches sensor natural orientation)
-    ///  LandscapeRight      → 180°   (home/USB on left  — sensor 180° from display)
-    ///  PortraitUpsideDown  → 270°
+    /// videoRotationAngle tells AVFoundation how much to rotate the sensor output
+    /// so it appears upright on screen:
     ///
-    /// Note: UIInterfaceOrientation.landscapeLeft means the device was rotated
-    /// clockwise so the home button is on the LEFT side of the screen — confusingly
-    /// named. The sensor faces landscapeLeft naturally, so 0° = no rotation needed.
-    private func currentAngle() -> CGFloat {
-        // Prefer windowScene (settled final value) over UIDevice (can be mid-rotation)
-        guard let scene = window?.windowScene else {
-            return angleFor(UIDevice.current.orientation)
+    ///   Portrait              →  90°  (sensor is naturally landscape; rotate CW to stand upright)
+    ///   LandscapeRight        →   0°  (home/USB-C on RIGHT — sensor natural orientation, no rotation)
+    ///   LandscapeLeft         → 180°  (home/USB-C on LEFT  — sensor is upside-down, rotate 180°)
+    ///   PortraitUpsideDown    → 270°
+    ///
+    /// UIInterfaceOrientation.landscapeRight = home button on the RIGHT side of the screen.
+    /// UIInterfaceOrientation.landscapeLeft  = home button on the LEFT  side of the screen.
+    /// (Confusingly, UIDeviceOrientation has the OPPOSITE naming for landscape.)
+    private func currentRotationAngle() -> CGFloat {
+        // Use effectiveGeometry.interfaceOrientation (iOS 26+, replaces deprecated .interfaceOrientation)
+        if let scene = window?.windowScene {
+            let orientation = scene.effectiveGeometry.interfaceOrientation
+            switch orientation {
+            case .portrait:            return 90
+            case .portraitUpsideDown:  return 270
+            case .landscapeRight:      return 0    // home on RIGHT → sensor natural, no rotation needed
+            case .landscapeLeft:       return 180  // home on LEFT  → sensor is flipped, rotate 180°
+            case .unknown:             break        // exhaustive — treat unknown as portrait
+            @unknown default:          break
+            }
         }
-        return angleFor(scene.interfaceOrientation)
-    }
 
-    private func angleFor(_ orientation: UIInterfaceOrientation) -> CGFloat {
-        switch orientation {
-        case .portrait:            return 90
-        case .portraitUpsideDown:  return 270
-        case .landscapeLeft:       return 0     // home/USB on right
-        case .landscapeRight:      return 180   // home/USB on left
-        @unknown default:          return 90
-        }
-    }
-
-    /// Fallback: convert UIDevice orientation to an angle when window scene unavailable
-    private func angleFor(_ orientation: UIDeviceOrientation) -> CGFloat {
-        switch orientation {
-        case .portrait:            return 90
-        case .portraitUpsideDown:  return 270
-        case .landscapeLeft:       return 180   // device rotated CW → interface is landscapeRight
-        case .landscapeRight:      return 0     // device rotated CCW → interface is landscapeLeft
-        default:                   return 90
+        // Fallback: derive from view bounds aspect ratio.
+        // Cannot determine left-vs-right landscape from bounds alone, so use 0° for both
+        // (person will appear upright; left/right flip is acceptable as fallback)
+        if bounds.width > bounds.height {
+            return 0    // landscape frame → landscape rotation
+        } else {
+            return 90   // portrait frame → portrait rotation
         }
     }
 }

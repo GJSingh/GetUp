@@ -278,25 +278,33 @@ final class WorkoutViewModel: ObservableObject {
 
         let allScores = completedSets.map(\.formScore)
         let avg = allScores.isEmpty ? 0.0 : allScores.reduce(0, +) / Double(allScores.count)
+        let startTime = workoutStartTime ?? Date()
 
-        let duration: Int = {
-            guard let start = workoutStartTime else { return 0 }
-            return Int(Date().timeIntervalSince(start))
-        }()
+        let duration: Int = Int(Date().timeIntervalSince(startTime))
 
         let session = WorkoutSession(
             exerciseName: selectedExercise.name,
             targetSets: targetSets,
             targetReps: targetReps
         )
-        session.durationSeconds = duration
-        session.averageFormScore = avg
-        session.completedSets = completedSets.count
+        session.durationSeconds    = duration
+        session.averageFormScore   = avg
+        session.completedSets      = completedSets.count
         session.totalRepsCompleted = completedSets.map(\.repsCompleted).reduce(0, +)
-        session.sets = completedSets
+        session.sets               = completedSets
 
         context.insert(session)
         try? context.save()
+
+        // Write to Apple Health (no-op if user declined permission)
+        HealthKitManager.shared.saveWorkout(
+            exerciseId:       selectedExercise.id,
+            exerciseName:     selectedExercise.name,
+            startDate:        startTime,
+            durationSeconds:  duration,
+            averageFormScore: avg,
+            totalReps:        session.totalRepsCompleted
+        )
     }
 
     // MARK: - Computed
